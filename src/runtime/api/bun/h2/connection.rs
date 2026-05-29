@@ -717,6 +717,7 @@ impl Connection {
             if let Some(s) = self.streams.get_mut(&target) {
                 s.state = State::Closed;
             }
+            sink.on_stream_reset(target, ErrorCode::ProtocolError);
             return false;
         }
         if rejected {
