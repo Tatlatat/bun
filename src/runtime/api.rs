@@ -125,6 +125,10 @@ pub mod bun_terminal_body;
 #[path = "api/bun/h2_frame_parser.rs"]
 pub mod h2_frame_parser_body;
 
+// From-scratch node:http2 engine rewrite (will replace h2_frame_parser.rs).
+#[path = "api/bun/h2/mod.rs"]
+pub mod h2;
+
 // SSL siblings — gated (boringssl_sys bindgen surface).
 #[path = "api/bun/SSLContextCache.rs"]
 pub mod bun_ssl_context_cache;
