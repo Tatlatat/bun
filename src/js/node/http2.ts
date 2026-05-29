@@ -2982,6 +2982,9 @@ class ServerHttp2Stream extends Http2Stream {
       }
     }
     this.headersSent = true;
+    if (onServerStreamFinishChannel.hasSubscribers) {
+      onServerStreamFinishChannel.publish({ stream: this, headers, flags: 0 });
+    }
     this[bunHTTP2Headers] = headers;
     if (endStream) {
       this.end();
@@ -3743,10 +3746,6 @@ class ServerHttp2Session extends Http2Session {
     if (typeof error === "number") {
       code = error;
       error = code !== NGHTTP2_NO_ERROR ? $ERR_HTTP2_SESSION_ERROR(code) : undefined;
-    }
-    if (error) {
-      // Streams torn down by this destroy surface the same session error (node semantics).
-      this[kSessionDestroyError] = error;
     }
     if (error) {
       // Streams torn down by this destroy surface the same session error (node semantics).
@@ -4581,7 +4580,7 @@ class ClientHttp2Session extends Http2Session {
 
       // RFC 9113 §8.5: CONNECT must carry an explicit :authority and no :scheme/:path — validated
       // before any defaults are applied.
-      if (headers[":method"] === HTTP2_METHOD_CONNECT) {
+      if (headers[":method"] === HTTP2_METHOD_CONNECT && headers[":protocol"] === undefined) {
         if (!headers[":authority"]) {
           throw $ERR_HTTP2_CONNECT_AUTHORITY();
         }
@@ -4607,7 +4606,7 @@ class ClientHttp2Session extends Http2Session {
         headers[":method"] = method;
       }
 
-      if (method !== HTTP2_METHOD_CONNECT) {
+      if (method !== HTTP2_METHOD_CONNECT || headers[":protocol"] !== undefined) {
         let scheme = headers[":scheme"];
         if (!scheme) {
           let protocol: string = url.protocol || options?.protocol || "https:";
@@ -4992,15 +4991,13 @@ function connectionListenerHTTP1(server, socket, options) {
       const value = rawHeaders[i + 1];
       const existing = headers[name];
       if (existing === undefined) {
-        headers[name] = value;
+        headers[name] = name === "set-cookie" ? [value] : value;
       } else if (name === "set-cookie") {
         existing.push(value);
       } else if (name !== "content-length" && name !== "host") {
         headers[name] = `${existing}, ${value}`;
       }
     }
-    const setCookie = headers["set-cookie"];
-    if (typeof setCookie === "string") headers["set-cookie"] = [setCookie];
     req.headers = headers;
     // The body is fed by the parser callbacks below; reading just resumes the socket.
     req._read = function (_size) {

@@ -8407,8 +8407,11 @@ impl H2FrameParser {
         let buffer = args_list.ptr[0];
         buffer.ensure_still_alive();
         // Same engine-driven inbound path as on_native_read (JS-fed sockets / proxied streams).
+        // The engine dispatches into JS between frames, and a handler can detach/transfer this
+        // ArrayBuffer; copy the bytes so the parse never reads freed memory.
         if let Some(array_buffer) = buffer.as_array_buffer(global_object) {
-            this.rewrite_read(array_buffer.byte_slice());
+            let copied = array_buffer.byte_slice().to_vec();
+            this.rewrite_read(&copied);
             Ok(JSValue::UNDEFINED)
         } else {
             Err(global_object.throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))

@@ -220,10 +220,11 @@ impl Connection {
 
     pub fn send_go_away(&mut self, sink: &impl Sink, code: ErrorCode, debug: &[u8]) {
         self.going_away = true;
-        let mut buf = [0u8; 8];
-        buf[0..4].copy_from_slice(&self.last_stream_id.to_be_bytes());
-        buf[4..8].copy_from_slice(&code.as_u32().to_be_bytes());
-        self.write_frame(sink, FrameType::GoAway, 0, 0, &buf);
+        let mut payload = Vec::with_capacity(8 + debug.len());
+        payload.extend_from_slice(&self.last_stream_id.to_be_bytes());
+        payload.extend_from_slice(&code.as_u32().to_be_bytes());
+        payload.extend_from_slice(debug);
+        self.write_frame(sink, FrameType::GoAway, 0, 0, &payload);
         let last = self.last_stream_id;
         sink.on_error(code, last, debug);
     }
