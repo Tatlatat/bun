@@ -5489,6 +5489,12 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             stream_ctx,
             JSValue::js_number(effective as f64),
         );
+        if effective == 7 {
+            // Fully closed: release the per-stream JS context root so it can be collected.
+            self.sctx.with_mut(|m| {
+                m.remove(&stream_id);
+            });
+        }
     }
 
     fn on_stream_reset(&self, stream_id: u32, code: crate::api::h2::wire::ErrorCode) {
@@ -5524,6 +5530,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 JSValue::js_number(code.as_u32() as f64),
             );
         }
+        // The reset closes the stream; release its JS context root.
+        self.sctx.with_mut(|m| {
+            m.remove(&stream_id);
+        });
     }
 }
 
@@ -8795,6 +8805,8 @@ impl H2FrameParser {
         // capacity must be released here. Drop-and-replace = free.
         self.read_buffer.set(MutableString::default());
         self.write_buffer.with_mut(|wb| wb.clear_and_free());
+        // Drop every per-stream JS context root; the parser is detaching.
+        self.sctx.with_mut(|m| m.clear());
         self.write_buffer_offset.set(0);
 
         // `HpackHandle::drop` → `lshpack_wrapper_deinit` (cleanup + free).

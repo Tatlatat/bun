@@ -644,6 +644,9 @@ impl Connection {
         let mut list_size: usize = 0;
         let mut field_count: usize = 0;
         let mut rejected = false;
+        let mut malformed = false;
+        let mut seen_regular = false;
+        let mut seen_pseudo: u8 = 0;
         while off < block.len() {
             match self.hpack.decode(&block[off..]) {
                 Ok(h) => {
@@ -652,6 +655,43 @@ impl Connection {
                     field_count += 1;
                     if rejected || list_size > max_list_size || field_count > max_pairs {
                         rejected = true;
+                        continue;
+                    }
+                    // RFC 9113 §8.2.1/§8.2.2: connection-specific fields, a pseudo-header following a
+                    // regular field, a repeated or unknown pseudo-header, or `te` with a value other
+                    // than "trailers" make the header block malformed.
+                    if !malformed {
+                        let name_b: &[u8] = h.name.as_ref();
+                        let value_b: &[u8] = h.value.as_ref();
+                        if let Some(rest) = name_b.strip_prefix(b":") {
+                            let bit: u8 = match rest {
+                                b"method" => 1,
+                                b"scheme" => 2,
+                                b"authority" => 4,
+                                b"path" => 8,
+                                b"status" => 16,
+                                b"protocol" => 32,
+                                _ => 64,
+                            };
+                            if seen_regular || bit == 64 || (seen_pseudo & bit) != 0 {
+                                malformed = true;
+                            }
+                            seen_pseudo |= bit;
+                        } else {
+                            seen_regular = true;
+                            match name_b {
+                                b"connection" | b"keep-alive" | b"proxy-connection"
+                                | b"transfer-encoding" | b"upgrade" => malformed = true,
+                                b"te" => {
+                                    if value_b != b"trailers" {
+                                        malformed = true;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    if malformed {
                         continue;
                     }
                     sink.on_header(target, h.name, h.value, h.never_index);
@@ -669,6 +709,15 @@ impl Connection {
         self.header_block.clear();
         if fatal {
             return true;
+        }
+        if malformed && !rejected {
+            // RFC 9113 §8.2: a malformed header block gets a stream error of type PROTOCOL_ERROR and
+            // is not delivered to the application.
+            self.send_rst_stream(sink, target, ErrorCode::ProtocolError);
+            if let Some(s) = self.streams.get_mut(&target) {
+                s.state = State::Closed;
+            }
+            return false;
         }
         if rejected {
             // Refuse the oversized header list with a stream error (matches the legacy engine and
