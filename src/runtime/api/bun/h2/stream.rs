@@ -84,7 +84,7 @@ pub fn transition(state: State, ev: Event) -> Result<State, TransitionError> {
             SendRst | RecvRst => Closed,
             // §5.1: receiving anything but WINDOW_UPDATE/PRIORITY/RST here is STREAM_CLOSED.
             RecvEndStream | RecvHeaders | RecvHeadersEndStream => {
-                return Err(TransitionError::StreamClosed)
+                return Err(TransitionError::StreamClosed);
             }
             _ => return Err(TransitionError::Protocol),
         },
@@ -127,17 +127,29 @@ mod tests {
     #[test]
     fn open_lifecycle() {
         assert_eq!(transition(State::Idle, Event::RecvHeaders), Ok(State::Open));
-        assert_eq!(transition(State::Open, Event::RecvEndStream), Ok(State::HalfClosedRemote));
-        assert_eq!(transition(State::HalfClosedRemote, Event::SendEndStream), Ok(State::Closed));
+        assert_eq!(
+            transition(State::Open, Event::RecvEndStream),
+            Ok(State::HalfClosedRemote)
+        );
+        assert_eq!(
+            transition(State::HalfClosedRemote, Event::SendEndStream),
+            Ok(State::Closed)
+        );
     }
 
     #[test]
     fn rst_on_idle_is_protocol_error() {
-        assert_eq!(transition(State::Idle, Event::RecvRst), Err(TransitionError::Protocol));
+        assert_eq!(
+            transition(State::Idle, Event::RecvRst),
+            Err(TransitionError::Protocol)
+        );
     }
 
     #[test]
     fn data_after_peer_end_is_stream_closed() {
-        assert_eq!(transition(State::HalfClosedRemote, Event::RecvEndStream), Err(TransitionError::StreamClosed));
+        assert_eq!(
+            transition(State::HalfClosedRemote, Event::RecvEndStream),
+            Err(TransitionError::StreamClosed)
+        );
     }
 }

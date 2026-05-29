@@ -23,7 +23,11 @@ pub struct Coder {
 
 impl Coder {
     pub fn new(max_capacity: u32) -> Self {
-        Coder { hpack: HpackHandle::new(max_capacity), enc_capacity: max_capacity, pending_enc_capacity: None }
+        Coder {
+            hpack: HpackHandle::new(max_capacity),
+            enc_capacity: max_capacity,
+            pending_enc_capacity: None,
+        }
     }
 
     /// Schedule an encoder capacity change from a received SETTINGS_HEADER_TABLE_SIZE. Applied
@@ -47,7 +51,14 @@ impl Coder {
     }
 
     #[inline]
-    pub fn encode(&mut self, name: &[u8], value: &[u8], never_index: bool, dst: &mut [u8], offset: usize) -> Result<usize, HpackError> {
+    pub fn encode(
+        &mut self,
+        name: &[u8],
+        value: &[u8],
+        never_index: bool,
+        dst: &mut [u8],
+        offset: usize,
+    ) -> Result<usize, HpackError> {
         self.hpack.encode(name, value, never_index, dst, offset)
     }
 

@@ -173,9 +173,21 @@ impl Connection {
 
     // ---- Outbound -------------------------------------------------------
 
-    fn write_frame(&mut self, sink: &impl Sink, ftype: FrameType, flags: u8, stream_id: u32, payload: &[u8]) {
+    fn write_frame(
+        &mut self,
+        sink: &impl Sink,
+        ftype: FrameType,
+        flags: u8,
+        stream_id: u32,
+        payload: &[u8],
+    ) {
         let mut hdr_buf = [0u8; wire::FRAME_HEADER_SIZE];
-        let hdr = FrameHeader { length: payload.len() as u32, frame_type: ftype as u8, flags, stream_id };
+        let hdr = FrameHeader {
+            length: payload.len() as u32,
+            frame_type: ftype as u8,
+            flags,
+            stream_id,
+        };
         hdr.write(&mut hdr_buf);
         sink.write(&hdr_buf);
         if !payload.is_empty() {
@@ -217,11 +229,23 @@ impl Connection {
     }
 
     fn send_window_update(&mut self, sink: &impl Sink, stream_id: u32, increment: u32) {
-        self.write_frame(sink, FrameType::WindowUpdate, 0, stream_id, &increment.to_be_bytes());
+        self.write_frame(
+            sink,
+            FrameType::WindowUpdate,
+            0,
+            stream_id,
+            &increment.to_be_bytes(),
+        );
     }
 
     fn send_rst_stream(&mut self, sink: &impl Sink, stream_id: u32, code: ErrorCode) {
-        self.write_frame(sink, FrameType::RstStream, 0, stream_id, &code.as_u32().to_be_bytes());
+        self.write_frame(
+            sink,
+            FrameType::RstStream,
+            0,
+            stream_id,
+            &code.as_u32().to_be_bytes(),
+        );
     }
 
     // ---- Inbound --------------------------------------------------------
@@ -236,15 +260,26 @@ impl Connection {
         if self.is_server && self.preface_received < wire::CONNECTION_PREFACE.len() {
             let need = wire::CONNECTION_PREFACE.len() - self.preface_received;
             let avail = need.min(bytes.len());
-            let expect = &wire::CONNECTION_PREFACE[self.preface_received..self.preface_received + avail];
+            let expect =
+                &wire::CONNECTION_PREFACE[self.preface_received..self.preface_received + avail];
             if &bytes[..avail] != expect {
-                self.send_go_away(sink,ErrorCode::ProtocolError, b"invalid connection preface");
-                return Feed { consumed: avail, fatal: true };
+                self.send_go_away(
+                    sink,
+                    ErrorCode::ProtocolError,
+                    b"invalid connection preface",
+                );
+                return Feed {
+                    consumed: avail,
+                    fatal: true,
+                };
             }
             self.preface_received += avail;
             offset += avail;
             if self.preface_received < wire::CONNECTION_PREFACE.len() {
-                return Feed { consumed: offset, fatal: false };
+                return Feed {
+                    consumed: offset,
+                    fatal: false,
+                };
             }
         }
 
@@ -260,7 +295,10 @@ impl Connection {
             }
             let payload = &remaining[wire::FRAME_HEADER_SIZE..total];
             if self.dispatch(sink, &hdr, payload) {
-                return Feed { consumed: offset + total, fatal: true };
+                return Feed {
+                    consumed: offset + total,
+                    fatal: true,
+                };
             }
             offset += total;
         }
@@ -268,7 +306,10 @@ impl Connection {
         // application-consumption-driven update works in node) — doing it per frame would both spam
         // WINDOW_UPDATE and make burst flow-control violations undetectable.
         self.replenish_windows(sink);
-        Feed { consumed: offset, fatal: false }
+        Feed {
+            consumed: offset,
+            fatal: false,
+        }
     }
 
     /// Send WINDOW_UPDATE for every receive window that has consumed at least half its size.
@@ -301,11 +342,11 @@ impl Connection {
         match wire::validate_header(hdr, self.local_settings.max_frame_size) {
             wire::HeaderValidation::Ok => {}
             wire::HeaderValidation::ConnectionError(code) => {
-                self.send_go_away(sink,code, b"frame validation failed");
+                self.send_go_away(sink, code, b"frame validation failed");
                 return true;
             }
             wire::HeaderValidation::StreamError { id, code } => {
-                self.send_rst_stream(sink,id, code);
+                self.send_rst_stream(sink, id, code);
                 return false;
             }
         }
@@ -315,12 +356,20 @@ impl Connection {
         if self.continuation_stream != 0 {
             let is_continuation = matches!(hdr.typ(), Some(FrameType::Continuation));
             if !is_continuation || hdr.stream_id != self.continuation_stream {
-                self.send_go_away(sink, ErrorCode::ProtocolError, b"expected CONTINUATION frame");
+                self.send_go_away(
+                    sink,
+                    ErrorCode::ProtocolError,
+                    b"expected CONTINUATION frame",
+                );
                 return true;
             }
         } else if matches!(hdr.typ(), Some(FrameType::Continuation)) {
             // §6.10: a CONTINUATION with no header block in progress is a connection PROTOCOL_ERROR.
-            self.send_go_away(sink, ErrorCode::ProtocolError, b"unexpected CONTINUATION frame");
+            self.send_go_away(
+                sink,
+                ErrorCode::ProtocolError,
+                b"unexpected CONTINUATION frame",
+            );
             return true;
         }
 
@@ -346,7 +395,11 @@ impl Connection {
     fn handle_settings(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         if wire::flags::has(hdr.flags, wire::flags::ACK) {
             if hdr.length != 0 {
-                self.send_go_away(sink,ErrorCode::FrameSizeError, b"SETTINGS ACK with payload");
+                self.send_go_away(
+                    sink,
+                    ErrorCode::FrameSizeError,
+                    b"SETTINGS ACK with payload",
+                );
                 return true;
             }
             self.local_settings_acked = true;
@@ -357,19 +410,28 @@ impl Connection {
         // node's maxSettings (nghttp2 max_settings): refuse SETTINGS frames carrying more entries
         // than the session allows before applying or surfacing any of them.
         if (payload.len() / 6) as u32 > self.max_settings {
-            self.send_go_away(sink, ErrorCode::EnhanceYourCalm, b"SETTINGS: too many settings entries");
+            self.send_go_away(
+                sink,
+                ErrorCode::EnhanceYourCalm,
+                b"SETTINGS: too many settings entries",
+            );
             return true;
         }
         // §6.5.2: validate value ranges before applying.
         if let Some(code) = settings::validate_payload(payload) {
-            self.send_go_away(sink,code, b"SETTINGS value out of range");
+            self.send_go_away(sink, code, b"SETTINGS value out of range");
             return true;
         }
         let old_table = self.remote_settings.header_table_size;
         let mut i = 0;
         while i + 6 <= payload.len() {
             let id = u16::from_be_bytes([payload[i], payload[i + 1]]);
-            let value = u32::from_be_bytes([payload[i + 2], payload[i + 3], payload[i + 4], payload[i + 5]]);
+            let value = u32::from_be_bytes([
+                payload[i + 2],
+                payload[i + 3],
+                payload[i + 4],
+                payload[i + 5],
+            ]);
             if let Some(sid) = SettingId::from_u16(id) {
                 self.remote_settings.apply(sid, value);
             }
@@ -377,7 +439,8 @@ impl Connection {
         }
         // The peer's HEADER_TABLE_SIZE governs OUR encoder; queue a §6.3 size update.
         if self.remote_settings.header_table_size != old_table {
-            self.hpack.queue_encoder_capacity(self.remote_settings.header_table_size);
+            self.hpack
+                .queue_encoder_capacity(self.remote_settings.header_table_size);
         }
         let snapshot = self.remote_settings;
         sink.on_remote_settings(&snapshot);
@@ -401,10 +464,11 @@ impl Connection {
     fn handle_go_away(&mut self, sink: &impl Sink, payload: &[u8]) -> bool {
         // §6.8: GOAWAY carries at least an 8-octet last-stream-id + error-code prefix.
         if payload.len() < 8 {
-            self.send_go_away(sink,ErrorCode::FrameSizeError, b"GOAWAY too short");
+            self.send_go_away(sink, ErrorCode::FrameSizeError, b"GOAWAY too short");
             return true;
         }
-        let last_stream_id = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) & 0x7fff_ffff;
+        let last_stream_id =
+            u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) & 0x7fff_ffff;
         let code_raw = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
         let code = error_code_from_u32(code_raw);
         self.going_away = true;
@@ -412,27 +476,41 @@ impl Connection {
         false
     }
 
-    fn handle_window_update(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
-        let increment = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) & 0x7fff_ffff;
+    fn handle_window_update(
+        &mut self,
+        sink: &impl Sink,
+        hdr: &FrameHeader,
+        payload: &[u8],
+    ) -> bool {
+        let increment =
+            u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) & 0x7fff_ffff;
         // §6.9.1: a 0 increment is an error (connection error on stream 0).
         if increment == 0 {
             if hdr.stream_id == 0 {
-                self.send_go_away(sink,ErrorCode::ProtocolError, b"WINDOW_UPDATE with 0 increment");
+                self.send_go_away(
+                    sink,
+                    ErrorCode::ProtocolError,
+                    b"WINDOW_UPDATE with 0 increment",
+                );
                 return true;
             }
-            self.send_rst_stream(sink,hdr.stream_id, ErrorCode::ProtocolError);
+            self.send_rst_stream(sink, hdr.stream_id, ErrorCode::ProtocolError);
             return false;
         }
         if hdr.stream_id == 0 {
             // §6.9.1: the connection window must not exceed 2^31-1.
             if self.send_window.increase(increment).is_err() {
-                self.send_go_away(sink,ErrorCode::FlowControlError, b"connection flow-control window overflow");
+                self.send_go_away(
+                    sink,
+                    ErrorCode::FlowControlError,
+                    b"connection flow-control window overflow",
+                );
                 return true;
             }
         } else if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
             // §6.9.1: a per-stream overflow is a stream error, not a connection error.
             if s.send_window.increase(increment).is_err() {
-                self.send_rst_stream(sink,hdr.stream_id, ErrorCode::FlowControlError);
+                self.send_rst_stream(sink, hdr.stream_id, ErrorCode::FlowControlError);
                 return false;
             }
         }
@@ -449,14 +527,14 @@ impl Connection {
 
         if wire::flags::has(hdr.flags, wire::flags::PADDED) {
             if payload.is_empty() {
-                self.send_go_away(sink,ErrorCode::FrameSizeError, b"HEADERS padded but empty");
+                self.send_go_away(sink, ErrorCode::FrameSizeError, b"HEADERS padded but empty");
                 return true;
             }
             let pad = payload[0] as usize;
             off = 1;
             // §6.1: padding that spans the whole frame is a PROTOCOL_ERROR.
             if off + pad > end {
-                self.send_go_away(sink,ErrorCode::ProtocolError, b"HEADERS padding too large");
+                self.send_go_away(sink, ErrorCode::ProtocolError, b"HEADERS padding too large");
                 return true;
             }
             end -= pad;
@@ -464,7 +542,11 @@ impl Connection {
         if wire::flags::has(hdr.flags, wire::flags::PRIORITY) {
             // 4-byte stream dependency + 1-byte weight; ignored (no RFC 7540 prioritization).
             if off + 5 > end {
-                self.send_go_away(sink,ErrorCode::FrameSizeError, b"HEADERS priority truncated");
+                self.send_go_away(
+                    sink,
+                    ErrorCode::FrameSizeError,
+                    b"HEADERS priority truncated",
+                );
                 return true;
             }
             off += 5;
@@ -484,7 +566,11 @@ impl Connection {
             .entry(hdr.stream_id)
             .or_insert_with(|| Stream::new(send_init, recv_init))
             .state;
-        let ev = if end_stream { stream::Event::RecvHeadersEndStream } else { stream::Event::RecvHeaders };
+        let ev = if end_stream {
+            stream::Event::RecvHeadersEndStream
+        } else {
+            stream::Event::RecvHeaders
+        };
         match stream::transition(cur_state, ev) {
             Ok(next) => {
                 if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
@@ -492,11 +578,15 @@ impl Connection {
                 }
             }
             Err(stream::TransitionError::Protocol) => {
-                self.send_go_away(sink,ErrorCode::ProtocolError, b"HEADERS in invalid stream state");
+                self.send_go_away(
+                    sink,
+                    ErrorCode::ProtocolError,
+                    b"HEADERS in invalid stream state",
+                );
                 return true;
             }
             Err(stream::TransitionError::StreamClosed) => {
-                self.send_rst_stream(sink,hdr.stream_id, ErrorCode::StreamClosed);
+                self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
                 return false;
             }
         }
@@ -567,7 +657,7 @@ impl Connection {
                 }
                 Err(_) => {
                     // §4.3: a header-block decoding error is a connection COMPRESSION_ERROR.
-                    self.send_go_away(sink,ErrorCode::CompressionError, b"HPACK decode error");
+                    self.send_go_away(sink, ErrorCode::CompressionError, b"HPACK decode error");
                     fatal = true;
                     break;
                 }
@@ -606,13 +696,13 @@ impl Connection {
         let mut end = payload.len();
         if wire::flags::has(hdr.flags, wire::flags::PADDED) {
             if payload.is_empty() {
-                self.send_go_away(sink,ErrorCode::FrameSizeError, b"DATA padded but empty");
+                self.send_go_away(sink, ErrorCode::FrameSizeError, b"DATA padded but empty");
                 return true;
             }
             let pad = payload[0] as usize;
             off = 1;
             if off + pad > end {
-                self.send_go_away(sink,ErrorCode::ProtocolError, b"DATA padding too large");
+                self.send_go_away(sink, ErrorCode::ProtocolError, b"DATA padding too large");
                 return true;
             }
             end -= pad;
@@ -622,7 +712,11 @@ impl Connection {
         // §6.9: the whole frame counts against the connection recv window.
         self.recv_window.on_data(consumed);
         if self.recv_window.is_overflowed() {
-            self.send_go_away(sink,ErrorCode::FlowControlError, b"connection flow-control window exceeded");
+            self.send_go_away(
+                sink,
+                ErrorCode::FlowControlError,
+                b"connection flow-control window exceeded",
+            );
             return true;
         }
 
@@ -671,7 +765,7 @@ impl Connection {
         };
         let stream_inc = match decision {
             DataDecision::Rst(code) => {
-                self.send_rst_stream(sink,hdr.stream_id, code);
+                self.send_rst_stream(sink, hdr.stream_id, code);
                 if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
                     s.state = State::Closed;
                 }
@@ -711,7 +805,9 @@ impl Connection {
 
     /// RFC 9113 §6.4 RST_STREAM.
     fn handle_rst_stream(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
-        let code = error_code_from_u32(u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]));
+        let code = error_code_from_u32(u32::from_be_bytes([
+            payload[0], payload[1], payload[2], payload[3],
+        ]));
         // §5.1: RST_STREAM on an idle (or never-seen) stream is a connection PROTOCOL_ERROR.
         let mut on_idle = match self.streams.get_mut(&hdr.stream_id) {
             Some(s) if s.state != State::Idle => {
@@ -733,7 +829,7 @@ impl Connection {
             on_idle = false;
         }
         if on_idle {
-            self.send_go_away(sink,ErrorCode::ProtocolError, b"RST_STREAM on idle stream");
+            self.send_go_away(sink, ErrorCode::ProtocolError, b"RST_STREAM on idle stream");
             return true;
         }
         sink.on_stream_reset(hdr.stream_id, code);
@@ -745,35 +841,59 @@ impl Connection {
     fn handle_push_promise(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         // §8.4: a server must never receive PUSH_PROMISE.
         if self.is_server {
-            self.send_go_away(sink,ErrorCode::ProtocolError, b"server received PUSH_PROMISE");
+            self.send_go_away(
+                sink,
+                ErrorCode::ProtocolError,
+                b"server received PUSH_PROMISE",
+            );
             return true;
         }
         let mut off = 0usize;
         let mut end = payload.len();
         if wire::flags::has(hdr.flags, wire::flags::PADDED) {
             if payload.is_empty() {
-                self.send_go_away(sink,ErrorCode::FrameSizeError, b"PUSH_PROMISE padded but empty");
+                self.send_go_away(
+                    sink,
+                    ErrorCode::FrameSizeError,
+                    b"PUSH_PROMISE padded but empty",
+                );
                 return true;
             }
             let pad = payload[0] as usize;
             off = 1;
             if off + pad > end {
-                self.send_go_away(sink,ErrorCode::ProtocolError, b"PUSH_PROMISE padding too large");
+                self.send_go_away(
+                    sink,
+                    ErrorCode::ProtocolError,
+                    b"PUSH_PROMISE padding too large",
+                );
                 return true;
             }
             end -= pad;
         }
         if off + 4 > end {
-            self.send_go_away(sink,ErrorCode::FrameSizeError, b"PUSH_PROMISE missing promised id");
+            self.send_go_away(
+                sink,
+                ErrorCode::FrameSizeError,
+                b"PUSH_PROMISE missing promised id",
+            );
             return true;
         }
-        let promised = u32::from_be_bytes([payload[off], payload[off + 1], payload[off + 2], payload[off + 3]]) & 0x7fff_ffff;
+        let promised = u32::from_be_bytes([
+            payload[off],
+            payload[off + 1],
+            payload[off + 2],
+            payload[off + 3],
+        ]) & 0x7fff_ffff;
         off += 4;
 
         // Reserve the promised (even) stream.
         let send_init = self.remote_settings.initial_window_size;
         let recv_init = self.local_settings.initial_window_size;
-        let entry = self.streams.entry(promised).or_insert_with(|| Stream::new(send_init, recv_init));
+        let entry = self
+            .streams
+            .entry(promised)
+            .or_insert_with(|| Stream::new(send_init, recv_init));
         entry.state = State::ReservedRemote;
         if promised > self.last_stream_id {
             self.last_stream_id = promised;
@@ -833,7 +953,10 @@ impl Connection {
     pub fn encode_header(&mut self, name: &[u8], value: &[u8], never_index: bool) -> bool {
         let old = self.enc_buf.len();
         self.enc_buf.resize(old + name.len() + value.len() + 16, 0);
-        match self.hpack.encode(name, value, never_index, &mut self.enc_buf, old) {
+        match self
+            .hpack
+            .encode(name, value, never_index, &mut self.enc_buf, old)
+        {
             Ok(n) => {
                 self.enc_buf.truncate(old + n);
                 true
@@ -860,12 +983,28 @@ impl Connection {
         if end_stream {
             flags |= wire::flags::END_STREAM;
         }
-        self.write_frame(sink, FrameType::Headers, flags, stream_id, &block[..first_len]);
+        self.write_frame(
+            sink,
+            FrameType::Headers,
+            flags,
+            stream_id,
+            &block[..first_len],
+        );
         let mut off = first_len;
         while off < total {
             let len = (total - off).min(max);
-            let f = if off + len == total { wire::flags::END_HEADERS } else { 0 };
-            self.write_frame(sink, FrameType::Continuation, f, stream_id, &block[off..off + len]);
+            let f = if off + len == total {
+                wire::flags::END_HEADERS
+            } else {
+                0
+            };
+            self.write_frame(
+                sink,
+                FrameType::Continuation,
+                f,
+                stream_id,
+                &block[off..off + len],
+            );
             off += len;
         }
         self.enc_buf = block;
@@ -873,8 +1012,15 @@ impl Connection {
 
         let send_init = self.remote_settings.initial_window_size;
         let recv_init = self.local_settings.initial_window_size;
-        let s = self.streams.entry(stream_id).or_insert_with(|| Stream::new(send_init, recv_init));
-        let ev = if end_stream { stream::Event::SendHeadersEndStream } else { stream::Event::SendHeaders };
+        let s = self
+            .streams
+            .entry(stream_id)
+            .or_insert_with(|| Stream::new(send_init, recv_init));
+        let ev = if end_stream {
+            stream::Event::SendHeadersEndStream
+        } else {
+            stream::Event::SendHeaders
+        };
         if let Ok(next) = stream::transition(s.state, ev) {
             s.state = next;
         }
@@ -886,9 +1032,19 @@ impl Connection {
     /// Send DATA honoring connection + stream send windows and the max frame size. Returns the
     /// number of bytes actually written; the caller queues and retries the remainder on
     /// WINDOW_UPDATE. END_STREAM is only set when the whole buffer is flushed in this call.
-    pub fn send_data(&mut self, sink: &impl Sink, stream_id: u32, data: &[u8], end_stream: bool) -> usize {
+    pub fn send_data(
+        &mut self,
+        sink: &impl Sink,
+        stream_id: u32,
+        data: &[u8],
+        end_stream: bool,
+    ) -> usize {
         let conn_avail = self.send_window.available();
-        let stream_avail = self.streams.get(&stream_id).map(|s| s.send_window.available()).unwrap_or(0);
+        let stream_avail = self
+            .streams
+            .get(&stream_id)
+            .map(|s| s.send_window.available())
+            .unwrap_or(0);
         let max_frame = self.remote_settings.max_frame_size as i64;
         let allowed = conn_avail.min(stream_avail).min(max_frame).max(0) as usize;
         let to_send = allowed.min(data.len());
@@ -899,7 +1055,11 @@ impl Connection {
             return 0;
         }
 
-        let flags = if end_stream && send_all { wire::flags::END_STREAM } else { 0 };
+        let flags = if end_stream && send_all {
+            wire::flags::END_STREAM
+        } else {
+            0
+        };
         self.write_frame(sink, FrameType::Data, flags, stream_id, &data[..to_send]);
         self.send_window.consume(to_send as i64);
         if let Some(s) = self.streams.get_mut(&stream_id) {
@@ -933,14 +1093,28 @@ impl Connection {
         let mut first = Vec::with_capacity(4 + first_len);
         first.extend_from_slice(&(promised_id & 0x7fff_ffff).to_be_bytes());
         first.extend_from_slice(&block[..first_len]);
-        let flags = if first_len == block.len() { wire::flags::END_HEADERS } else { 0 };
+        let flags = if first_len == block.len() {
+            wire::flags::END_HEADERS
+        } else {
+            0
+        };
         self.write_frame(sink, FrameType::PushPromise, flags, parent_id, &first);
 
         let mut o = first_len;
         while o < block.len() {
             let len = (block.len() - o).min(max);
-            let f = if o + len == block.len() { wire::flags::END_HEADERS } else { 0 };
-            self.write_frame(sink, FrameType::Continuation, f, parent_id, &block[o..o + len]);
+            let f = if o + len == block.len() {
+                wire::flags::END_HEADERS
+            } else {
+                0
+            };
+            self.write_frame(
+                sink,
+                FrameType::Continuation,
+                f,
+                parent_id,
+                &block[o..o + len],
+            );
             o += len;
         }
         self.enc_buf = block;
@@ -948,7 +1122,10 @@ impl Connection {
 
         let send_init = self.remote_settings.initial_window_size;
         let recv_init = self.local_settings.initial_window_size;
-        let s = self.streams.entry(promised_id).or_insert_with(|| Stream::new(send_init, recv_init));
+        let s = self
+            .streams
+            .entry(promised_id)
+            .or_insert_with(|| Stream::new(send_init, recv_init));
         s.state = State::ReservedLocal;
         if promised_id > self.last_stream_id {
             self.last_stream_id = promised_id;
@@ -1021,7 +1198,9 @@ mod tests {
             self.opens.borrow_mut().push(id);
         }
         fn on_header(&self, id: u32, name: &[u8], value: &[u8], _never: bool) {
-            self.headers.borrow_mut().push((id, name.to_vec(), value.to_vec()));
+            self.headers
+                .borrow_mut()
+                .push((id, name.to_vec(), value.to_vec()));
         }
         fn on_headers_complete(&self, id: u32, end_stream: bool, _flags: u8) {
             self.headers_done.borrow_mut().push((id, end_stream));
@@ -1039,7 +1218,9 @@ mod tests {
             self.pushes.borrow_mut().push((parent, promised));
         }
         fn on_altsvc(&self, id: u32, origin: &[u8], value: &[u8]) {
-            self.altsvc.borrow_mut().push((id, origin.to_vec(), value.to_vec()));
+            self.altsvc
+                .borrow_mut()
+                .push((id, origin.to_vec(), value.to_vec()));
         }
         fn on_origin(&self, origin: &[u8]) {
             self.origins.borrow_mut().push(origin.to_vec());
@@ -1060,7 +1241,12 @@ mod tests {
 
     fn frame(ftype: FrameType, flags: u8, stream_id: u32, payload: &[u8]) -> Vec<u8> {
         let mut v = vec![0u8; wire::FRAME_HEADER_SIZE];
-        let hdr = FrameHeader { length: payload.len() as u32, frame_type: ftype as u8, flags, stream_id };
+        let hdr = FrameHeader {
+            length: payload.len() as u32,
+            frame_type: ftype as u8,
+            flags,
+            stream_id,
+        };
         let mut hb = [0u8; wire::FRAME_HEADER_SIZE];
         hdr.write(&mut hb);
         v.copy_from_slice(&hb);
@@ -1081,7 +1267,10 @@ mod tests {
         let out = sink.out.borrow();
         assert_eq!(out[3], FrameType::Ping as u8);
         assert_eq!(out[4] & wire::flags::ACK, wire::flags::ACK);
-        assert_eq!(&out[wire::FRAME_HEADER_SIZE..wire::FRAME_HEADER_SIZE + 8], &payload);
+        assert_eq!(
+            &out[wire::FRAME_HEADER_SIZE..wire::FRAME_HEADER_SIZE + 8],
+            &payload
+        );
         assert_eq!(sink.pings.borrow().len(), 1);
     }
 
@@ -1093,7 +1282,10 @@ mod tests {
         let f = frame(FrameType::WindowUpdate, 0, 0, &[0, 0, 0, 0]);
         let fed = c.receive(&sink, &f);
         assert!(fed.fatal);
-        assert_eq!(sink.goaway.get().map(|(code, _)| code), Some(ErrorCode::ProtocolError.as_u32()));
+        assert_eq!(
+            sink.goaway.get().map(|(code, _)| code),
+            Some(ErrorCode::ProtocolError.as_u32())
+        );
     }
 
     #[test]
@@ -1106,7 +1298,10 @@ mod tests {
         let f = frame(FrameType::Settings, 0, 0, &payload);
         let fed = c.receive(&sink, &f);
         assert!(fed.fatal);
-        assert_eq!(sink.goaway.get().map(|(code, _)| code), Some(ErrorCode::ProtocolError.as_u32()));
+        assert_eq!(
+            sink.goaway.get().map(|(code, _)| code),
+            Some(ErrorCode::ProtocolError.as_u32())
+        );
     }
 
     #[test]
@@ -1121,11 +1316,24 @@ mod tests {
         assert!(!fed.fatal);
         assert_eq!(fed.consumed, f.len());
         assert_eq!(*sink.opens.borrow(), vec![1]);
-        assert!(sink.headers.borrow().iter().any(|(id, n, v)| *id == 1 && n == b":method" && v == b"GET"));
-        assert!(sink.headers.borrow().iter().any(|(id, n, v)| *id == 1 && n == b":path" && v == b"/"));
+        assert!(
+            sink.headers
+                .borrow()
+                .iter()
+                .any(|(id, n, v)| *id == 1 && n == b":method" && v == b"GET")
+        );
+        assert!(
+            sink.headers
+                .borrow()
+                .iter()
+                .any(|(id, n, v)| *id == 1 && n == b":path" && v == b"/")
+        );
         assert_eq!(*sink.headers_done.borrow(), vec![(1, true)]);
         assert_eq!(*sink.ended.borrow(), vec![1]);
-        assert_eq!(c.streams.get(&1).map(|s| s.state), Some(State::HalfClosedRemote));
+        assert_eq!(
+            c.streams.get(&1).map(|s| s.state),
+            Some(State::HalfClosedRemote)
+        );
     }
 
     #[test]
@@ -1144,7 +1352,10 @@ mod tests {
         assert!(!fed.fatal);
         assert_eq!(*sink.data.borrow(), vec![(1, b"hello".to_vec())]);
         assert_eq!(*sink.ended.borrow(), vec![1]);
-        assert_eq!(c.streams.get(&1).map(|s| s.state), Some(State::HalfClosedRemote));
+        assert_eq!(
+            c.streams.get(&1).map(|s| s.state),
+            Some(State::HalfClosedRemote)
+        );
     }
 
     #[test]
@@ -1152,10 +1363,18 @@ mod tests {
         let sink = CaptureSink::default();
         let mut c = Connection::new(true, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
-        let f = frame(FrameType::RstStream, 0, 1, &ErrorCode::Cancel.as_u32().to_be_bytes());
+        let f = frame(
+            FrameType::RstStream,
+            0,
+            1,
+            &ErrorCode::Cancel.as_u32().to_be_bytes(),
+        );
         let fed = c.receive(&sink, &f);
         assert!(fed.fatal);
-        assert_eq!(sink.goaway.get().map(|(code, _)| code), Some(ErrorCode::ProtocolError.as_u32()));
+        assert_eq!(
+            sink.goaway.get().map(|(code, _)| code),
+            Some(ErrorCode::ProtocolError.as_u32())
+        );
     }
 
     #[test]
@@ -1168,7 +1387,10 @@ mod tests {
         assert!(client.encode_header(b":path", b"/x", false));
         client.send_header_block(&csink, 1, true);
         let wire_bytes = csink.out.borrow().clone();
-        assert_eq!(client.streams.get(&1).map(|s| s.state), Some(State::HalfClosedLocal));
+        assert_eq!(
+            client.streams.get(&1).map(|s| s.state),
+            Some(State::HalfClosedLocal)
+        );
 
         // ...and a server engine decodes the exact same bytes back to the original fields.
         let ssink = CaptureSink::default();
@@ -1177,8 +1399,20 @@ mod tests {
         let fed = server.receive(&ssink, &wire_bytes);
         assert!(!fed.fatal);
         assert_eq!(fed.consumed, wire_bytes.len());
-        assert!(ssink.headers.borrow().iter().any(|(id, n, v)| *id == 1 && n == b":method" && v == b"GET"));
-        assert!(ssink.headers.borrow().iter().any(|(id, n, v)| *id == 1 && n == b":path" && v == b"/x"));
+        assert!(
+            ssink
+                .headers
+                .borrow()
+                .iter()
+                .any(|(id, n, v)| *id == 1 && n == b":method" && v == b"GET")
+        );
+        assert!(
+            ssink
+                .headers
+                .borrow()
+                .iter()
+                .any(|(id, n, v)| *id == 1 && n == b":path" && v == b"/x")
+        );
         assert_eq!(*ssink.ended.borrow(), vec![1]);
     }
 
@@ -1192,7 +1426,10 @@ mod tests {
         assert!(server.encode_header(b":path", b"/pushed", false));
         server.send_push_promise(&ssink, 1, 2);
         let bytes = ssink.out.borrow().clone();
-        assert_eq!(server.streams.get(&2).map(|s| s.state), Some(State::ReservedLocal));
+        assert_eq!(
+            server.streams.get(&2).map(|s| s.state),
+            Some(State::ReservedLocal)
+        );
 
         // Client receives it: on_push_promise(parent=1, promised=2) then the request headers.
         let csink = CaptureSink::default();
@@ -1202,8 +1439,17 @@ mod tests {
         assert!(!fed.fatal);
         assert_eq!(fed.consumed, bytes.len());
         assert_eq!(*csink.pushes.borrow(), vec![(1, 2)]);
-        assert!(csink.headers.borrow().iter().any(|(id, n, v)| *id == 2 && n == b":path" && v == b"/pushed"));
-        assert_eq!(client.streams.get(&2).map(|s| s.state), Some(State::ReservedRemote));
+        assert!(
+            csink
+                .headers
+                .borrow()
+                .iter()
+                .any(|(id, n, v)| *id == 2 && n == b":path" && v == b"/pushed")
+        );
+        assert_eq!(
+            client.streams.get(&2).map(|s| s.state),
+            Some(State::ReservedRemote)
+        );
     }
 
     #[test]
@@ -1212,10 +1458,18 @@ mod tests {
         let mut c = Connection::new(true, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
         // promised id + empty block
-        let f = frame(FrameType::PushPromise, wire::flags::END_HEADERS, 1, &[0, 0, 0, 2]);
+        let f = frame(
+            FrameType::PushPromise,
+            wire::flags::END_HEADERS,
+            1,
+            &[0, 0, 0, 2],
+        );
         let fed = c.receive(&sink, &f);
         assert!(fed.fatal);
-        assert_eq!(sink.goaway.get().map(|(code, _)| code), Some(ErrorCode::ProtocolError.as_u32()));
+        assert_eq!(
+            sink.goaway.get().map(|(code, _)| code),
+            Some(ErrorCode::ProtocolError.as_u32())
+        );
     }
 
     #[test]

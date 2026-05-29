@@ -154,7 +154,12 @@ impl FrameHeader {
         let frame_type = buf[3];
         let flags = buf[4];
         let stream_id = u32::from_be_bytes([buf[5], buf[6], buf[7], buf[8]]) & 0x7fff_ffff;
-        FrameHeader { length, frame_type, flags, stream_id }
+        FrameHeader {
+            length,
+            frame_type,
+            flags,
+            stream_id,
+        }
     }
 
     /// Serialize this header into a 9-byte big-endian buffer.
@@ -181,7 +186,10 @@ pub enum HeaderValidation {
     /// Send GOAWAY with this code and close the connection.
     ConnectionError(ErrorCode),
     /// Send RST_STREAM with this code on the given stream.
-    StreamError { id: u32, code: ErrorCode },
+    StreamError {
+        id: u32,
+        code: ErrorCode,
+    },
 }
 
 /// Whether a frame type's stream identifier must be zero, non-zero, or may be either (§4.1/§6).
@@ -258,7 +266,10 @@ fn frame_size_error(hdr: &FrameHeader, t: FrameType) -> HeaderValidation {
     // and WINDOW_UPDATE (§6.9) bad lengths are connection errors.
     let stream_level = hdr.stream_id != 0 && matches!(t, FrameType::Priority | FrameType::Data);
     if stream_level {
-        HeaderValidation::StreamError { id: hdr.stream_id, code: ErrorCode::FrameSizeError }
+        HeaderValidation::StreamError {
+            id: hdr.stream_id,
+            code: ErrorCode::FrameSizeError,
+        }
     } else {
         HeaderValidation::ConnectionError(ErrorCode::FrameSizeError)
     }
@@ -270,7 +281,12 @@ mod tests {
 
     #[test]
     fn frame_header_roundtrip() {
-        let hdr = FrameHeader { length: 0x010203, frame_type: 0x04, flags: 0x01, stream_id: 0x7abcdef0 & 0x7fffffff };
+        let hdr = FrameHeader {
+            length: 0x010203,
+            frame_type: 0x04,
+            flags: 0x01,
+            stream_id: 0x7abcdef0 & 0x7fffffff,
+        };
         let mut buf = [0u8; FRAME_HEADER_SIZE];
         hdr.write(&mut buf);
         let back = FrameHeader::parse(&buf);
@@ -282,19 +298,43 @@ mod tests {
 
     #[test]
     fn settings_on_nonzero_stream_is_connection_error() {
-        let hdr = FrameHeader { length: 0, frame_type: FrameType::Settings as u8, flags: 0, stream_id: 1 };
-        assert_eq!(validate_header(&hdr, MAX_FRAME_SIZE_DEFAULT), HeaderValidation::ConnectionError(ErrorCode::ProtocolError));
+        let hdr = FrameHeader {
+            length: 0,
+            frame_type: FrameType::Settings as u8,
+            flags: 0,
+            stream_id: 1,
+        };
+        assert_eq!(
+            validate_header(&hdr, MAX_FRAME_SIZE_DEFAULT),
+            HeaderValidation::ConnectionError(ErrorCode::ProtocolError)
+        );
     }
 
     #[test]
     fn ping_wrong_length_is_frame_size_error() {
-        let hdr = FrameHeader { length: 6, frame_type: FrameType::Ping as u8, flags: 0, stream_id: 0 };
-        assert_eq!(validate_header(&hdr, MAX_FRAME_SIZE_DEFAULT), HeaderValidation::ConnectionError(ErrorCode::FrameSizeError));
+        let hdr = FrameHeader {
+            length: 6,
+            frame_type: FrameType::Ping as u8,
+            flags: 0,
+            stream_id: 0,
+        };
+        assert_eq!(
+            validate_header(&hdr, MAX_FRAME_SIZE_DEFAULT),
+            HeaderValidation::ConnectionError(ErrorCode::FrameSizeError)
+        );
     }
 
     #[test]
     fn data_on_stream_zero_is_protocol_error() {
-        let hdr = FrameHeader { length: 3, frame_type: FrameType::Data as u8, flags: 0, stream_id: 0 };
-        assert_eq!(validate_header(&hdr, MAX_FRAME_SIZE_DEFAULT), HeaderValidation::ConnectionError(ErrorCode::ProtocolError));
+        let hdr = FrameHeader {
+            length: 3,
+            frame_type: FrameType::Data as u8,
+            flags: 0,
+            stream_id: 0,
+        };
+        assert_eq!(
+            validate_header(&hdr, MAX_FRAME_SIZE_DEFAULT),
+            HeaderValidation::ConnectionError(ErrorCode::ProtocolError)
+        );
     }
 }

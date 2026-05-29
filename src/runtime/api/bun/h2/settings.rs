@@ -55,11 +55,23 @@ impl Settings {
         let pairs = [
             (SettingId::HeaderTableSize as u16, self.header_table_size),
             (SettingId::EnablePush as u16, self.enable_push),
-            (SettingId::MaxConcurrentStreams as u16, self.max_concurrent_streams),
-            (SettingId::InitialWindowSize as u16, self.initial_window_size),
+            (
+                SettingId::MaxConcurrentStreams as u16,
+                self.max_concurrent_streams,
+            ),
+            (
+                SettingId::InitialWindowSize as u16,
+                self.initial_window_size,
+            ),
             (SettingId::MaxFrameSize as u16, self.max_frame_size),
-            (SettingId::MaxHeaderListSize as u16, self.max_header_list_size),
-            (SettingId::EnableConnectProtocol as u16, self.enable_connect_protocol),
+            (
+                SettingId::MaxHeaderListSize as u16,
+                self.max_header_list_size,
+            ),
+            (
+                SettingId::EnableConnectProtocol as u16,
+                self.enable_connect_protocol,
+            ),
         ];
         let mut off = 0;
         for (id, value) in pairs {
@@ -94,7 +106,12 @@ pub fn validate_payload(payload: &[u8]) -> Option<ErrorCode> {
     let mut i = 0;
     while i + 6 <= payload.len() {
         let id = u16::from_be_bytes([payload[i], payload[i + 1]]);
-        let value = u32::from_be_bytes([payload[i + 2], payload[i + 3], payload[i + 4], payload[i + 5]]);
+        let value = u32::from_be_bytes([
+            payload[i + 2],
+            payload[i + 3],
+            payload[i + 4],
+            payload[i + 5],
+        ]);
         if let Some(code) = validate_unit(id, value) {
             return Some(code);
         }
@@ -116,18 +133,27 @@ mod tests {
 
     #[test]
     fn enable_push_out_of_range() {
-        assert_eq!(validate_unit(SettingId::EnablePush as u16, 2), Some(ErrorCode::ProtocolError));
+        assert_eq!(
+            validate_unit(SettingId::EnablePush as u16, 2),
+            Some(ErrorCode::ProtocolError)
+        );
         assert_eq!(validate_unit(SettingId::EnablePush as u16, 1), None);
     }
 
     #[test]
     fn initial_window_overflow() {
-        assert_eq!(validate_unit(SettingId::InitialWindowSize as u16, 0x8000_0000), Some(ErrorCode::FlowControlError));
+        assert_eq!(
+            validate_unit(SettingId::InitialWindowSize as u16, 0x8000_0000),
+            Some(ErrorCode::FlowControlError)
+        );
     }
 
     #[test]
     fn max_frame_size_bounds() {
-        assert_eq!(validate_unit(SettingId::MaxFrameSize as u16, 1000), Some(ErrorCode::ProtocolError));
+        assert_eq!(
+            validate_unit(SettingId::MaxFrameSize as u16, 1000),
+            Some(ErrorCode::ProtocolError)
+        );
         assert_eq!(validate_unit(SettingId::MaxFrameSize as u16, 16_384), None);
     }
 }

@@ -3426,9 +3426,12 @@ impl H2FrameParser {
                     }
                 };
                 off += header.next;
-                let js_name = match get_http2_common_string(&global_object, header.well_know as u32) {
+                let js_name = match get_http2_common_string(&global_object, header.well_know as u32)
+                {
                     Some(cached) => cached,
-                    None => bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.name)?,
+                    None => {
+                        bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.name)?
+                    }
                 };
                 headers.push(&global_object, js_name)?;
                 headers.push(
@@ -5051,10 +5054,7 @@ impl H2FrameParser {
 }
 
 /// Bridge the rewrite engine's `Settings` to the JS settings object via the legacy wire payload.
-fn rewrite_settings_to_js(
-    s: &crate::api::h2::settings::Settings,
-    global: &GlobalRef,
-) -> JSValue {
+fn rewrite_settings_to_js(s: &crate::api::h2::settings::Settings, global: &GlobalRef) -> JSValue {
     let fp = FullSettingsPayload {
         header_table_size: s.header_table_size,
         enable_push: s.enable_push,
@@ -5291,8 +5291,12 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn on_altsvc(&self, stream_id: u32, origin: &[u8], value: &[u8]) {
-        let origin_js = self.string_or_empty_to_js(origin).unwrap_or(JSValue::UNDEFINED);
-        let value_js = self.string_or_empty_to_js(value).unwrap_or(JSValue::UNDEFINED);
+        let origin_js = self
+            .string_or_empty_to_js(origin)
+            .unwrap_or(JSValue::UNDEFINED);
+        let value_js = self
+            .string_or_empty_to_js(value)
+            .unwrap_or(JSValue::UNDEFINED);
         self.dispatch_with_2_extra(
             JSH2FrameParser::Gc::onAltSvc,
             origin_js,
@@ -5407,8 +5411,16 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             unsafe { (*stream).end_after_headers = end_stream };
         }
-        let headers = self.pending_headers.get().get().unwrap_or(JSValue::UNDEFINED);
-        let sensitive = self.pending_sensitive.get().get().unwrap_or(JSValue::UNDEFINED);
+        let headers = self
+            .pending_headers
+            .get()
+            .get()
+            .unwrap_or(JSValue::UNDEFINED);
+        let sensitive = self
+            .pending_sensitive
+            .get()
+            .get()
+            .unwrap_or(JSValue::UNDEFINED);
         if self.rewrite_pending_push.get() == stream_id && stream_id != 0 {
             // A PUSH_PROMISE header block: surface the promised request to JS as a pushed stream.
             self.rewrite_pending_push.set(0);
@@ -7284,7 +7296,12 @@ impl H2FrameParser {
                 let value_slice = value_str.to_slice(global_object);
                 let value = value_slice.slice();
                 if this
-                    .encode_header_into_list(&mut encoded_headers, validated_name, value, never_index)
+                    .encode_header_into_list(
+                        &mut encoded_headers,
+                        validated_name,
+                        value,
+                        never_index,
+                    )
                     .is_err()
                 {
                     return Err(
@@ -7373,7 +7390,10 @@ impl H2FrameParser {
         // Rewrite engine: record the JS stream context for the engine's Sink callbacks. Dropping a
         // previous entry releases its root (StrongOptional: Drop -> destroy).
         this.sctx.with_mut(|m| {
-            m.insert(stream_id, StrongOptional::create(context_arg, global_object));
+            m.insert(
+                stream_id,
+                StrongOptional::create(context_arg, global_object),
+            );
         });
 
         // Legacy path: also set on the legacy stream if it still exists (best-effort).
@@ -7699,7 +7719,11 @@ impl H2FrameParser {
             }
         }
 
-        for ignore_pseudo_headers in 0..(if headers_are_raw_pairs { 0usize } else { 2usize }) {
+        for ignore_pseudo_headers in 0..(if headers_are_raw_pairs {
+            0usize
+        } else {
+            2usize
+        }) {
             // PORT NOTE: `bun_jsc::JSPropertyIterator` (runtime-options variant) lacks `.reset()`;
             // re-initialize per pass instead — same observable property walk as the Zig two-pass loop.
             let mut iter = bun_jsc::JSPropertyIterator::init(

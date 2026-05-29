@@ -7,10 +7,10 @@
 // Connection-level cases only here (no HPACK required): preface, SETTINGS handshake/ack, PING,
 // WINDOW_UPDATE, frame-size and stream-id rules. HPACK/HEADERS cases live in a sibling file.
 
-import { test, expect, describe, beforeAll, afterAll } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { once } from "node:events";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 

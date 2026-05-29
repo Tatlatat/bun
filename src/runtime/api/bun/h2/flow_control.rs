@@ -8,7 +8,7 @@
 
 #![allow(dead_code)]
 
-use super::wire::{ErrorCode, DEFAULT_WINDOW_SIZE, MAX_WINDOW_SIZE};
+use super::wire::{DEFAULT_WINDOW_SIZE, ErrorCode, MAX_WINDOW_SIZE};
 
 /// Outbound (send) window. Signed because a SETTINGS-driven INITIAL_WINDOW_SIZE decrease can push
 /// it negative (§6.9.2) — legal; we just stop sending until it recovers.
@@ -19,19 +19,27 @@ pub struct SendWindow {
 
 impl Default for SendWindow {
     fn default() -> Self {
-        SendWindow { remaining: DEFAULT_WINDOW_SIZE as i64 }
+        SendWindow {
+            remaining: DEFAULT_WINDOW_SIZE as i64,
+        }
     }
 }
 
 impl SendWindow {
     pub fn new(initial: u32) -> Self {
-        SendWindow { remaining: initial as i64 }
+        SendWindow {
+            remaining: initial as i64,
+        }
     }
 
     /// Bytes we may send right now (never negative for sizing).
     #[inline]
     pub fn available(&self) -> i64 {
-        if self.remaining > 0 { self.remaining } else { 0 }
+        if self.remaining > 0 {
+            self.remaining
+        } else {
+            0
+        }
     }
 
     #[inline]
@@ -67,13 +75,19 @@ pub struct RecvWindow {
 
 impl Default for RecvWindow {
     fn default() -> Self {
-        RecvWindow { size: DEFAULT_WINDOW_SIZE as i64, consumed: 0 }
+        RecvWindow {
+            size: DEFAULT_WINDOW_SIZE as i64,
+            consumed: 0,
+        }
     }
 }
 
 impl RecvWindow {
     pub fn new(initial: u32) -> Self {
-        RecvWindow { size: initial as i64, consumed: 0 }
+        RecvWindow {
+            size: initial as i64,
+            consumed: 0,
+        }
     }
 
     #[inline]

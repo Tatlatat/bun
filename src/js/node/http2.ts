@@ -2319,8 +2319,7 @@ class Http2Stream extends Duplex {
     // instance the stream is destroyed with (node publishes from this same point in its _destroy).
     if (err != null) {
       if (this instanceof ClientHttp2Stream) {
-        if (onClientStreamErrorChannel.hasSubscribers)
-          onClientStreamErrorChannel.publish({ stream: this, error: err });
+        if (onClientStreamErrorChannel.hasSubscribers) onClientStreamErrorChannel.publish({ stream: this, error: err });
       } else if (onServerStreamErrorChannel.hasSubscribers) {
         onServerStreamErrorChannel.publish({ stream: this, error: err });
       }
@@ -3366,12 +3365,7 @@ class ServerHttp2Session extends Http2Session {
         }
       }
     },
-    error(
-      self: ServerHttp2Session,
-      errorCode: number | string,
-      lastStreamId: number,
-      opaqueData: Buffer,
-    ) {
+    error(self: ServerHttp2Session, errorCode: number | string, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       if (errorCode === "ERR_HTTP2_TOO_MANY_INVALID_FRAMES") {
         self.destroy($ERR_HTTP2_TOO_MANY_INVALID_FRAMES());
@@ -4022,12 +4016,7 @@ class ClientHttp2Session extends Http2Session {
         }
       }
     },
-    error(
-      self: ClientHttp2Session,
-      errorCode: number | string,
-      lastStreamId: number,
-      opaqueData: Buffer,
-    ) {
+    error(self: ClientHttp2Session, errorCode: number | string, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       // The native parser reports the maxSessionInvalidFrames violation with a string code
       // (it is a JS-level error, not an HTTP/2 error code).
@@ -4888,7 +4877,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   }
 
   function writeBody(buf) {
-    const length = buf ? buf.byteLength ?? buf.length : 0;
+    const length = buf ? (buf.byteLength ?? buf.length) : 0;
     if (length) {
       if (chunked) {
         socket.write(length.toString(16) + "\r\n");
@@ -4926,7 +4915,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     end(chunk, encoding, _callback, _strictContentLength) {
       if (this.ended) return 0;
       const buf = toBuffer(chunk, encoding);
-      const length = buf ? buf.byteLength ?? buf.length : 0;
+      const length = buf ? (buf.byteLength ?? buf.length) : 0;
       writeHeadToSocket(length);
       writeBody(buf);
       if (chunked) socket.write("0\r\n\r\n");
