@@ -3311,6 +3311,7 @@ impl H2FrameParser {
             // error — a stream error (PROTOCOL_ERROR) on a stream, a connection error on stream 0.
             if increment == 0 {
                 if let Some(s) = stream {
+                    // SAFETY: s is *mut Stream from self.streams; valid while the map entry exists
                     self.end_stream(unsafe { &mut *s }, ErrorCode::PROTOCOL_ERROR);
                 } else {
                     self.send_go_away(
@@ -3329,9 +3330,11 @@ impl H2FrameParser {
                 // SAFETY: s is *mut Stream from self.streams; valid while the map entry exists
                 let next = unsafe { (*s).remote_window_size } + increment as u64;
                 if next > MAX_WINDOW_SIZE as u64 {
+                    // SAFETY: s is *mut Stream from self.streams; valid while the map entry exists
                     self.end_stream(unsafe { &mut *s }, ErrorCode::FLOW_CONTROL_ERROR);
                     return end;
                 }
+                // SAFETY: s is *mut Stream from self.streams; valid while the map entry exists
                 unsafe { (*s).remote_window_size = next };
             } else if frame.stream_identifier == 0 {
                 let next = self.remote_window_size.get() + increment as u64;
@@ -5054,7 +5057,7 @@ impl H2FrameParser {
 }
 
 /// Bridge the rewrite engine's `Settings` to the JS settings object via the legacy wire payload.
-fn rewrite_settings_to_js(s: &crate::api::h2::settings::Settings, global: &GlobalRef) -> JSValue {
+fn rewrite_settings_to_js(s: &crate::api::h2::settings::Settings, global: GlobalRef) -> JSValue {
     let fp = FullSettingsPayload {
         header_table_size: s.header_table_size,
         enable_push: s.enable_push,
@@ -5065,7 +5068,7 @@ fn rewrite_settings_to_js(s: &crate::api::h2::settings::Settings, global: &Globa
         enable_connect_protocol: s.enable_connect_protocol,
         ..Default::default()
     };
-    fp.to_js(global)
+    fp.to_js(&global)
 }
 
 impl H2FrameParser {
@@ -5209,7 +5212,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.outstanding_settings
             .set(self.outstanding_settings.get().saturating_sub(1));
         let g = self.global();
-        let js = rewrite_settings_to_js(settings, &g);
+        let js = rewrite_settings_to_js(settings, g);
         self.dispatch(JSH2FrameParser::Gc::onLocalSettings, js);
     }
 
@@ -5238,7 +5241,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         }
         let _ = self.flush();
         let g = self.global();
-        let js = rewrite_settings_to_js(settings, &g);
+        let js = rewrite_settings_to_js(settings, g);
         self.dispatch(JSH2FrameParser::Gc::onRemoteSettings, js);
     }
 
@@ -5474,6 +5477,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             {
                 effective = 7;
             }
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             unsafe {
                 (*stream).state = match effective {
                     5 => StreamState::HALF_CLOSED_LOCAL,

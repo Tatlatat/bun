@@ -2875,6 +2875,8 @@ class ServerHttp2Stream extends Http2Stream {
     } else if ($isArray(headers)) {
       statusCode = 0;
       let isDateSet = false;
+      // Never mutate the caller's array: the :status/date defaults below are appended to a copy.
+      headers = ArrayPrototypeSlice.$call(headers);
       for (let i = 0; i < headers.length; i += 2) {
         const key = headers[i];
         if (typeof key !== "string") continue;
@@ -4521,7 +4523,16 @@ class ClientHttp2Session extends Http2Session {
           additionalPseudoHeaders.push(HTTP2_HEADER_METHOD, method);
         }
         if (method !== HTTP2_METHOD_CONNECT || protocol !== undefined) {
-          if (authority === undefined && raw[HTTP2_HEADER_HOST] === undefined) {
+          // `raw` is a flat [name, value, ...] array - scan the name slots for a host header
+          // instead of reading a string key off the array.
+          let rawHasHost = false;
+          for (let i = 0; i < raw.length; i += 2) {
+            if (raw[i] === HTTP2_HEADER_HOST) {
+              rawHasHost = true;
+              break;
+            }
+          }
+          if (authority === undefined && !rawHasHost) {
             authority = this.#authority;
             additionalPseudoHeaders.push(HTTP2_HEADER_AUTHORITY, authority);
           }
@@ -4653,10 +4664,32 @@ class ClientHttp2Session extends Http2Session {
         if (this.#pendingRequests === null) {
           this.#pendingRequests = [];
         }
-        this.#pendingRequests.push({ req, headers, sensitiveNames, options });
+        // Preserve the on-wire form for queued requests: the array form keeps duplicate-header
+        // interleaving that the object form cannot represent.
+        this.#pendingRequests.push({ req, headers: rawHeadersList !== null ? rawHeadersList : headers, sensitiveNames, options });
         return req;
       }
 
+      {
+        // nghttp2 rejects :path values containing control characters, SP or DEL at send time and
+        // surfaces it as a stream error rather than a synchronous throw; mirror that. Validate
+        // before a stream id is allocated so the rejected request never creates stream state.
+        const path = headers[":path"];
+        if (typeof path === "string") {
+          for (let i = 0; i < path.length; i++) {
+            const c = path.charCodeAt(i);
+            if (c <= 0x20 || c === 0x7f) {
+              const req = new ClientHttp2Stream(undefined, this, headers);
+              req.authority = authority;
+              req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
+              req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
+              process.nextTick(emitStreamErrorNT, this, req, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
+              process.nextTick(emitEventNT, req, "ready");
+              return req;
+            }
+          }
+        }
+      }
       let stream_id: number = this.#parser.getNextStream();
       if (stream_id < 0) {
         const req = new ClientHttp2Stream(undefined, this, headers);
@@ -4666,22 +4699,6 @@ class ClientHttp2Session extends Http2Session {
       const req = new ClientHttp2Stream(stream_id, this, headers);
       req.authority = authority;
       req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
-      {
-        // nghttp2 rejects :path values containing control characters, SP or DEL at send time and
-        // surfaces it as a stream error rather than a synchronous throw; mirror that.
-        const path = headers[":path"];
-        if (typeof path === "string") {
-          for (let i = 0; i < path.length; i++) {
-            const c = path.charCodeAt(i);
-            if (c <= 0x20 || c === 0x7f) {
-              req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
-              process.nextTick(emitStreamErrorNT, this, req, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
-              process.nextTick(emitEventNT, req, "ready");
-              return req;
-            }
-          }
-        }
-      }
       if (onClientStreamCreatedChannel.hasSubscribers) {
         onClientStreamCreatedChannel.publish({ stream: req, headers });
       }
@@ -5235,7 +5252,12 @@ Http2Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, even
 };
 
 function onErrorSecureServerSession(err, socket) {
-  if (!this.emit("clientError", err, socket)) socket.destroy(err);
+  if (!this.emit("clientError", err, socket)) {
+    // The handshake-failed socket has no 'error' listener yet; destroying it with the error
+    // would crash the process with an uncaught exception. The failure has already been
+    // surfaced through 'tlsClientError'/'clientError'.
+    if (!socket.destroyed) socket.destroy();
+  }
 }
 
 function emitFrameErrorEventNT(stream, frameType, errorCode) {

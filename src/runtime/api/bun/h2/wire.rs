@@ -253,7 +253,7 @@ pub fn validate_header(hdr: &FrameHeader, local_max_frame_size: u32) -> HeaderVa
         }
     }
     // §6.5: SETTINGS length must be a multiple of 6.
-    if t == FrameType::Settings && hdr.length % 6 != 0 {
+    if t == FrameType::Settings && !hdr.length.is_multiple_of(6) {
         return frame_size_error(hdr, t);
     }
 

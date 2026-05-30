@@ -34,7 +34,7 @@ impl SendWindow {
 
     /// Bytes we may send right now (never negative for sizing).
     #[inline]
-    pub fn available(&self) -> i64 {
+    pub fn available(self) -> i64 {
         if self.remaining > 0 {
             self.remaining
         } else {

@@ -56,12 +56,18 @@ pub fn transition(state: State, ev: Event) -> Result<State, TransitionError> {
             _ => return Err(TransitionError::Protocol),
         },
         ReservedLocal => match ev {
-            SendHeaders | SendHeadersEndStream => HalfClosedRemote,
+            SendHeaders => HalfClosedRemote,
+            // RFC 9113 5.1: reserved -> HEADERS moves to half-closed; END_STREAM on that same
+            // HEADERS closes the stream.
+            SendHeadersEndStream => Closed,
             SendRst | RecvRst => Closed,
             _ => return Err(TransitionError::Protocol),
         },
         ReservedRemote => match ev {
-            RecvHeaders | RecvHeadersEndStream => HalfClosedLocal,
+            RecvHeaders => HalfClosedLocal,
+            // RFC 9113 5.1: reserved -> HEADERS moves to half-closed; END_STREAM on that same
+            // HEADERS closes the stream.
+            RecvHeadersEndStream => Closed,
             SendRst | RecvRst => Closed,
             _ => return Err(TransitionError::Protocol),
         },

@@ -614,6 +614,16 @@ impl Connection {
     /// RFC 9113 §6.10 CONTINUATION: append the fragment; complete the block on END_HEADERS.
     fn handle_continuation(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         // dispatch() already enforced that we are assembling this exact stream.
+        // Cap the reassembled block: a peer streaming CONTINUATION frames forever must not grow
+        // memory without bound. 4x the header-list limit (with floor) is far beyond any legitimate
+        // block; refuse the connection past it.
+        let cap = (self.local_settings.max_header_list_size as usize)
+            .saturating_mul(4)
+            .max(65536);
+        if self.header_block.len().saturating_add(payload.len()) > cap {
+            self.send_go_away(sink, ErrorCode::EnhanceYourCalm, b"header block too large");
+            return true;
+        }
         self.header_block.extend_from_slice(payload);
         if !wire::flags::has(hdr.flags, wire::flags::END_HEADERS) {
             return false;
@@ -661,8 +671,8 @@ impl Connection {
                     // regular field, a repeated or unknown pseudo-header, or `te` with a value other
                     // than "trailers" make the header block malformed.
                     if !malformed {
-                        let name_b: &[u8] = h.name.as_ref();
-                        let value_b: &[u8] = h.value.as_ref();
+                        let name_b: &[u8] = h.name;
+                        let value_b: &[u8] = h.value;
                         if let Some(rest) = name_b.strip_prefix(b":") {
                             let bit: u8 = match rest {
                                 b"method" => 1,
@@ -1233,7 +1243,10 @@ mod tests {
             self.out.borrow_mut().extend_from_slice(bytes);
             WriteResult::Sent
         }
-        fn on_error(&self, _c: ErrorCode, _l: u32, _d: &[u8]) {}
+        fn on_error(&self, c: ErrorCode, l: u32, _d: &[u8]) {
+            // send_go_away() reports through on_error; record it so the _is_goaway tests can assert.
+            self.goaway.set(Some((c.as_u32(), l)));
+        }
         fn on_local_settings(&self, _s: &Settings) {}
         fn on_remote_settings(&self, _s: &Settings) {
             self.remote_settings.set(self.remote_settings.get() + 1);
@@ -1284,7 +1297,7 @@ mod tests {
         let mut buf = vec![0u8; 4096];
         let mut off = 0usize;
         for (name, value) in pairs {
-            off = coder.encode(name, value, false, &mut buf, off).unwrap();
+            off += coder.encode(name, value, false, &mut buf, off).unwrap();
         }
         buf.truncate(off);
         buf
