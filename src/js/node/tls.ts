@@ -1484,7 +1484,9 @@ function connect(...args) {
   const options = normal[0];
   const { ALPNProtocols, servername } = options as { ALPNProtocols?: unknown; servername?: unknown };
 
-  if (options.checkServerIdentity !== undefined) {
+  if ("checkServerIdentity" in options) {
+    // Node validates whenever the key is present - an explicit `undefined`
+    // throws ERR_INVALID_ARG_TYPE (test-tls-basic-validations).
     validateFunction(options.checkServerIdentity, "options.checkServerIdentity");
   }
 
