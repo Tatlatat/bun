@@ -4666,7 +4666,12 @@ class ClientHttp2Session extends Http2Session {
         }
         // Preserve the on-wire form for queued requests: the array form keeps duplicate-header
         // interleaving that the object form cannot represent.
-        this.#pendingRequests.push({ req, headers: rawHeadersList !== null ? rawHeadersList : headers, sensitiveNames, options });
+        this.#pendingRequests.push({
+          req,
+          headers: rawHeadersList !== null ? rawHeadersList : headers,
+          sensitiveNames,
+          options,
+        });
         return req;
       }
 
