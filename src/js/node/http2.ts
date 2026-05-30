@@ -2876,7 +2876,10 @@ class ServerHttp2Stream extends Http2Stream {
       statusCode = 0;
       let isDateSet = false;
       // Never mutate the caller's array: the :status/date defaults below are appended to a copy.
-      headers = ArrayPrototypeSlice.$call(headers);
+      // Symbol-keyed own properties (the never-index list) do not survive a copy; carry it over.
+      const sensitiveNamesForCopy = headers[sensitiveHeaders];
+      headers = headers.slice();
+      if (sensitiveNamesForCopy !== undefined) headers[sensitiveHeaders] = sensitiveNamesForCopy;
       for (let i = 0; i < headers.length; i += 2) {
         const key = headers[i];
         if (typeof key !== "string") continue;
