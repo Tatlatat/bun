@@ -353,9 +353,10 @@ impl Connection {
         }
         self.replenish_buf = buf;
         // Evict closed streams so the map (and this scan) stay bounded on long-lived connections.
-        // A late frame for an evicted id takes the unknown-stream path, which answers
-        // RST_STREAM(STREAM_CLOSED) - the 5.1 closed-state behavior - so nothing is lost by
-        // forgetting the entry.
+        // A late DATA/RST/WINDOW_UPDATE for an evicted id takes the unknown-stream path, which
+        // answers RST_STREAM(STREAM_CLOSED) - the 5.1 closed-state behavior. A late HEADERS for an
+        // evicted id re-opens a fresh entry (the parity check still applies); that matches how
+        // trailers-after-close are treated as a new block by the legacy parser as well.
         let mut evict = std::mem::take(&mut self.evict_buf);
         evict.clear();
         for (id, s) in self.streams.iter() {

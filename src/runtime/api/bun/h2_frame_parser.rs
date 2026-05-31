@@ -1319,6 +1319,9 @@ pub struct H2FrameParser {
     max_header_list_pairs: Cell<u32>,
     /// node maxSettings session option: maximum entries accepted in a single SETTINGS frame.
     max_settings: Cell<u32>,
+    /// Receive-window growth requested by setLocalWindowSize() while a dispatch held the engine
+    /// borrow; applied by rewrite_read() on its next pass.
+    pending_recv_window_growth: Cell<i64>,
     max_rejected_streams: Cell<u32>,
     max_session_invalid_frames: Cell<u32>,
     max_outstanding_settings: Cell<u32>,
@@ -5125,6 +5128,12 @@ impl H2FrameParser {
             engine.max_header_list_pairs = self.max_header_list_pairs.get();
             engine.max_settings = self.max_settings.get();
             engine.max_invalid_frames = self.max_session_invalid_frames.get();
+            // Apply any receive-window growth setLocalWindowSize() accumulated while a dispatch
+            // held this borrow.
+            let pending = self.pending_recv_window_growth.replace(0);
+            if pending > 0 {
+                engine.recv_window.grow(pending);
+            }
         }
         if self.rewrite_tail.get().is_empty() {
             let consumed = {
@@ -5799,9 +5808,21 @@ impl H2FrameParser {
             this.send_window_update(0, UInt31WithReserved::init(increment, false));
             // Keep the rewrite engine's receive window in sync: we just advertised a larger
             // window, so the engine must accept that much DATA without tripping its overflow
-            // check.
-            if let Some(engine) = this.engine.borrow_mut().as_mut() {
-                engine.recv_window.grow(increment as i64);
+            // check. try_borrow: setLocalWindowSize can be called from JS inside a dispatch
+            // (rewrite_read holds the engine borrow there); deferring the sync to the pending
+            // delta keeps that path panic-free.
+            match this.engine.try_borrow_mut() {
+                Ok(mut guard) => {
+                    if let Some(engine) = guard.as_mut() {
+                        engine.recv_window.grow(increment as i64);
+                    }
+                }
+                Err(_) => {
+                    // A dispatch is in progress; accumulate the delta for rewrite_read to apply
+                    // when the borrow is released.
+                    this.pending_recv_window_growth
+                        .set(this.pending_recv_window_growth.get() + increment as i64);
+                }
             }
         }
         for (_, item) in this.streams.get().iter() {
@@ -8593,6 +8614,7 @@ impl H2FrameParser {
             remote_used_window_size: Cell::new(0),
             max_header_list_pairs: Cell::new(128),
             max_settings: Cell::new(32),
+            pending_recv_window_growth: Cell::new(0),
             max_rejected_streams: Cell::new(100),
             max_session_invalid_frames: Cell::new(1000),
             max_outstanding_settings: Cell::new(10),
