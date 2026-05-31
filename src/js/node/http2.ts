@@ -3874,8 +3874,9 @@ class ClientHttp2Session extends Http2Session {
       if (!self) return;
       self.#connections++;
       if (stream_id % 2 === 0) {
-        // pushStream
-        const stream = new ClientHttp2Session(stream_id, self, null);
+        // A pushed (even-id) stream announced by the server: its context object must be a stream,
+        // not a session.
+        const stream = new ClientHttp2Stream(stream_id, self, null);
         self.#parser?.setStreamContext(stream_id, stream);
       }
     },
