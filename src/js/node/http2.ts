@@ -2214,11 +2214,7 @@ class Http2Stream extends Duplex {
     // push, regardless of the server-settings default.
     const session = this[bunHTTP2Session];
     return (
-      session != null &&
-      session.type === 0 &&
-      !!session.remoteSettings?.enablePush &&
-      !this.destroyed &&
-      !this.closed
+      session != null && session.type === 0 && !!session.remoteSettings?.enablePush && !this.destroyed && !this.closed
     );
   }
   close(code, callback) {

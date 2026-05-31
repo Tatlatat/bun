@@ -479,8 +479,7 @@ impl Connection {
         // 6.9.2: a change to SETTINGS_INITIAL_WINDOW_SIZE adjusts every non-closed stream's send
         // window by the delta (the connection window is not affected).
         if self.remote_settings.initial_window_size != old_initial_window {
-            let delta =
-                self.remote_settings.initial_window_size as i64 - old_initial_window as i64;
+            let delta = self.remote_settings.initial_window_size as i64 - old_initial_window as i64;
             for (_, s) in self.streams.iter_mut() {
                 if s.state != State::Closed {
                     s.send_window.apply_initial_delta(delta);
@@ -611,7 +610,11 @@ impl Connection {
         // checked here: a client legitimately receives HEADERS on even promised ids that are
         // numerically below its own latest odd id.)
         if is_new && self.is_server && hdr.stream_id % 2 == 0 {
-            self.send_go_away(sink, ErrorCode::ProtocolError, b"invalid stream id for HEADERS");
+            self.send_go_away(
+                sink,
+                ErrorCode::ProtocolError,
+                b"invalid stream id for HEADERS",
+            );
             return true;
         }
         let cur_state = self
@@ -740,7 +743,11 @@ impl Connection {
                             // headers, but inbound PUSH_PROMISE blocks legitimately carry request
                             // pseudo-headers, so that check needs the push context first.)
                             let wrong_direction = self.is_server && rest == b"status";
-                            if seen_regular || bit == 64 || (seen_pseudo & bit) != 0 || wrong_direction {
+                            if seen_regular
+                                || bit == 64
+                                || (seen_pseudo & bit) != 0
+                                || wrong_direction
+                            {
                                 malformed = true;
                             }
                             seen_pseudo |= bit;
@@ -969,7 +976,11 @@ impl Connection {
         // 6.6: a client that disabled push (SETTINGS_ENABLE_PUSH=0) must treat the receipt of a
         // PUSH_PROMISE as a connection error of type PROTOCOL_ERROR.
         if self.local_settings.enable_push == 0 {
-            self.send_go_away(sink, ErrorCode::ProtocolError, b"PUSH_PROMISE with push disabled");
+            self.send_go_away(
+                sink,
+                ErrorCode::ProtocolError,
+                b"PUSH_PROMISE with push disabled",
+            );
             return true;
         }
         let mut off = 0usize;
