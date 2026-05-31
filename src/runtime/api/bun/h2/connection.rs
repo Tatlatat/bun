@@ -210,8 +210,8 @@ impl Connection {
         self.write_frame(sink, FrameType::Settings, wire::flags::ACK, 0, &[]);
     }
 
-    pub fn send_ping(&mut self, sink: &impl Sink, payload: &[u8; 8]) {
-        self.write_frame(sink, FrameType::Ping, 0, 0, payload);
+    pub fn send_ping(&mut self, sink: &impl Sink, payload: [u8; 8]) {
+        self.write_frame(sink, FrameType::Ping, 0, 0, &payload);
     }
 
     fn send_ping_ack(&mut self, sink: &impl Sink, payload: &[u8]) {
