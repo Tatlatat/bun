@@ -294,7 +294,11 @@ impl Connection {
             // before buffering its payload - waiting for the full frame first would let a peer
             // make us hold up to 16 MiB per connection on a 9-byte header.
             if hdr.length > self.local_settings.max_frame_size {
-                self.send_go_away(sink, ErrorCode::FrameSizeError, b"frame exceeds SETTINGS_MAX_FRAME_SIZE");
+                self.send_go_away(
+                    sink,
+                    ErrorCode::FrameSizeError,
+                    b"frame exceeds SETTINGS_MAX_FRAME_SIZE",
+                );
                 return Feed {
                     consumed: offset,
                     fatal: true,
