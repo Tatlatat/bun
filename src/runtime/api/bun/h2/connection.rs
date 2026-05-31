@@ -136,6 +136,8 @@ pub struct Connection {
     enc_buf: Vec<u8>,
     /// Reusable scratch for end-of-batch window replenishment (stream id, increment).
     replenish_buf: Vec<(u32, u32)>,
+    /// Reused buffer for evicting closed streams after each receive pass (no per-call allocation).
+    evict_buf: Vec<u32>,
 
     preface_received: usize,
     pub last_stream_id: u32,
@@ -165,6 +167,7 @@ impl Connection {
             header_push_parent: 0,
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
+            evict_buf: Vec::new(),
             preface_received: 0,
             last_stream_id: 0,
             going_away: false,
@@ -349,6 +352,21 @@ impl Connection {
             self.send_window_update(sink, *id, *inc);
         }
         self.replenish_buf = buf;
+        // Evict closed streams so the map (and this scan) stay bounded on long-lived connections.
+        // A late frame for an evicted id takes the unknown-stream path, which answers
+        // RST_STREAM(STREAM_CLOSED) - the 5.1 closed-state behavior - so nothing is lost by
+        // forgetting the entry.
+        let mut evict = std::mem::take(&mut self.evict_buf);
+        evict.clear();
+        for (id, s) in self.streams.iter() {
+            if s.state == State::Closed {
+                evict.push(*id);
+            }
+        }
+        for id in evict.iter() {
+            self.streams.remove(id);
+        }
+        self.evict_buf = evict;
     }
 
     /// Dispatch one fully-buffered frame. Returns true if the connection is now fatally closing.
@@ -438,6 +456,7 @@ impl Connection {
             return true;
         }
         let old_table = self.remote_settings.header_table_size;
+        let old_initial_window = self.remote_settings.initial_window_size;
         let mut i = 0;
         while i + 6 <= payload.len() {
             let id = u16::from_be_bytes([payload[i], payload[i + 1]]);
@@ -452,10 +471,21 @@ impl Connection {
             }
             i += 6;
         }
-        // The peer's HEADER_TABLE_SIZE governs OUR encoder; queue a §6.3 size update.
+        // The peer's HEADER_TABLE_SIZE governs OUR encoder; queue a 6.3 size update.
         if self.remote_settings.header_table_size != old_table {
             self.hpack
                 .queue_encoder_capacity(self.remote_settings.header_table_size);
+        }
+        // 6.9.2: a change to SETTINGS_INITIAL_WINDOW_SIZE adjusts every non-closed stream's send
+        // window by the delta (the connection window is not affected).
+        if self.remote_settings.initial_window_size != old_initial_window {
+            let delta =
+                self.remote_settings.initial_window_size as i64 - old_initial_window as i64;
+            for (_, s) in self.streams.iter_mut() {
+                if s.state != State::Closed {
+                    s.send_window.apply_initial_delta(delta);
+                }
+            }
         }
         let snapshot = self.remote_settings;
         sink.on_remote_settings(&snapshot);
@@ -513,7 +543,7 @@ impl Connection {
             return false;
         }
         if hdr.stream_id == 0 {
-            // §6.9.1: the connection window must not exceed 2^31-1.
+            // 6.9.1: the connection window must not exceed 2^31-1.
             if self.send_window.increase(increment).is_err() {
                 self.send_go_away(
                     sink,
@@ -523,7 +553,7 @@ impl Connection {
                 return true;
             }
         } else if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
-            // §6.9.1: a per-stream overflow is a stream error, not a connection error.
+            // 6.9.1: a per-stream overflow is a stream error, not a connection error.
             if s.send_window.increase(increment).is_err() {
                 self.send_rst_stream(sink, hdr.stream_id, ErrorCode::FlowControlError);
                 return false;
@@ -576,6 +606,14 @@ impl Connection {
         let send_init = self.remote_settings.initial_window_size;
         let recv_init = self.local_settings.initial_window_size;
         let is_new = !self.streams.contains_key(&hdr.stream_id);
+        // RFC 9113 5.1.1: client-initiated streams use odd ids - a server receiving HEADERS that
+        // would open an even-id stream is a connection PROTOCOL_ERROR. (Monotonicity is not
+        // checked here: a client legitimately receives HEADERS on even promised ids that are
+        // numerically below its own latest odd id.)
+        if is_new && self.is_server && hdr.stream_id % 2 == 0 {
+            self.send_go_away(sink, ErrorCode::ProtocolError, b"invalid stream id for HEADERS");
+            return true;
+        }
         let cur_state = self
             .streams
             .entry(hdr.stream_id)
@@ -697,7 +735,12 @@ impl Connection {
                                 b"protocol" => 32,
                                 _ => 64,
                             };
-                            if seen_regular || bit == 64 || (seen_pseudo & bit) != 0 {
+                            // 8.3.1: requests never carry :status - a server seeing it inbound is
+                            // a malformed block. (The client direction also constrains pseudo
+                            // headers, but inbound PUSH_PROMISE blocks legitimately carry request
+                            // pseudo-headers, so that check needs the push context first.)
+                            let wrong_direction = self.is_server && rest == b"status";
+                            if seen_regular || bit == 64 || (seen_pseudo & bit) != 0 || wrong_direction {
                                 malformed = true;
                             }
                             seen_pseudo |= bit;
@@ -914,13 +957,19 @@ impl Connection {
     /// RFC 9113 §6.6 PUSH_PROMISE (clients only, §8.4): reserve the promised stream and assemble its
     /// request header block (decoded in finish_header_block, which fires on_push_promise first).
     fn handle_push_promise(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
-        // §8.4: a server must never receive PUSH_PROMISE.
+        // 8.4: a server must never receive PUSH_PROMISE.
         if self.is_server {
             self.send_go_away(
                 sink,
                 ErrorCode::ProtocolError,
                 b"server received PUSH_PROMISE",
             );
+            return true;
+        }
+        // 6.6: a client that disabled push (SETTINGS_ENABLE_PUSH=0) must treat the receipt of a
+        // PUSH_PROMISE as a connection error of type PROTOCOL_ERROR.
+        if self.local_settings.enable_push == 0 {
+            self.send_go_away(sink, ErrorCode::ProtocolError, b"PUSH_PROMISE with push disabled");
             return true;
         }
         let mut off = 0usize;

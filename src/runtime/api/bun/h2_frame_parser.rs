@@ -5256,10 +5256,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.dispatch_with_extra(JSH2FrameParser::Gc::onPing, buffer, JSValue::from(is_ack));
     }
 
-    fn on_go_away(&self, code: crate::api::h2::wire::ErrorCode, _last: u32, debug: &[u8]) {
+    fn on_go_away(&self, code: crate::api::h2::wire::ErrorCode, last: u32, debug: &[u8]) {
         // Always a Buffer (possibly empty) to match the legacy dispatch shape. The lastStreamID
-        // surfaced to JS is the receiver's own highest stream id (legacy behavior; peers commonly
-        // send 0 and expect the receiver to know its last processed stream).
+        // surfaced to JS is the peer's Last-Stream-ID from the GOAWAY payload (node's documented
+        // semantics for the 'goaway' event).
         let g = self.global();
         let chunk = self
             .handlers
@@ -5270,7 +5270,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.dispatch_with_2_extra(
             JSH2FrameParser::Gc::onGoAway,
             JSValue::js_number(code.as_u32() as f64),
-            JSValue::js_number(self.last_stream_id.get() as f64),
+            JSValue::js_number(last as f64),
             chunk,
         );
     }
@@ -5797,6 +5797,12 @@ impl H2FrameParser {
         if window_size_value as u64 > old_window_size {
             let increment: u32 = (window_size_value as u64 - old_window_size) as u32;
             this.send_window_update(0, UInt31WithReserved::init(increment, false));
+            // Keep the rewrite engine's receive window in sync: we just advertised a larger
+            // window, so the engine must accept that much DATA without tripping its overflow
+            // check.
+            if let Some(engine) = this.engine.borrow_mut().as_mut() {
+                engine.recv_window.grow(increment as i64);
+            }
         }
         for (_, item) in this.streams.get().iter() {
             // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
@@ -5902,7 +5908,13 @@ impl H2FrameParser {
                         "Expected lastStreamId to be a number between 1 and 2147483647"
                     )));
                 }
-                last_stream_id = u32::try_from(id).expect("int cast");
+                // node: a lastStreamID of 0 or less (the JS wrapper's default) means "use the
+                // last processed stream id"; only an explicit positive id overrides it. Without
+                // this, graceful close puts Last-Stream-ID=0 on the wire, telling the peer that
+                // every in-flight stream is safe to retry.
+                if id > 0 {
+                    last_stream_id = u32::try_from(id).expect("int cast");
+                }
             }
             if args_list.len >= 3 {
                 let opaque_data_arg = args_list.ptr[2];

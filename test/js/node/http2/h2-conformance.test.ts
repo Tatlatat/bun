@@ -335,8 +335,10 @@ describe("fixed-length frames (checklist §3)", () => {
     c.sendPreface();
     c.sendEmptySettings();
     c.sendFrame(FrameType.PRIORITY, 0, 1, Buffer.alloc(4)); // must be 5
-    const goaway = await c.waitForGoaway();
-    expect([ErrorCode.FRAME_SIZE_ERROR, ErrorCode.PROTOCOL_ERROR]).toContain(goawayErrorCode(goaway));
+    // RFC 9113 §6.3: a wrong-length PRIORITY on a stream is a *stream* error - the connection
+    // answers with RST_STREAM(FRAME_SIZE_ERROR) on that stream, not a connection GOAWAY.
+    const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+    expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.FRAME_SIZE_ERROR);
     c.destroy();
   });
 

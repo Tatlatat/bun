@@ -1949,8 +1949,7 @@ hideFromStack(streamErrorFromCode);
 // semantics) instead of being silently dropped.
 function cancelPendingPings(callbacks): void {
   if (!callbacks) return;
-  const err = new Error("HTTP2 ping cancelled");
-  err.code = "ERR_HTTP2_PING_CANCEL";
+  const err = $ERR_HTTP2_PING_CANCEL();
   for (let i = 0; i < callbacks.length; i++) {
     process.nextTick(callbacks[i][0], err, 0, null);
   }
@@ -2210,10 +2209,17 @@ class Http2Stream extends Duplex {
   }
 
   get pushAllowed() {
-    // Push is allowed only when the peer advertised SETTINGS_ENABLE_PUSH=1 (true only for server
-    // streams whose client accepts push; clients see false because servers must not enable push).
+    // node: pushAllowed is only meaningful on server streams (session.type === 0) - it reflects
+    // whether the connected client advertised SETTINGS_ENABLE_PUSH=1. A client stream can never
+    // push, regardless of the server-settings default.
     const session = this[bunHTTP2Session];
-    return !!session?.remoteSettings?.enablePush && !this.destroyed && !this.closed;
+    return (
+      session != null &&
+      session.type === 0 &&
+      !!session.remoteSettings?.enablePush &&
+      !this.destroyed &&
+      !this.closed
+    );
   }
   close(code, callback) {
     if ((this[bunHTTP2StreamStatus] & StreamState.Closed) === 0) {
@@ -2694,7 +2700,17 @@ class ServerHttp2Stream extends Http2Stream {
     if (onServerStreamStartChannel.hasSubscribers) {
       onServerStreamStartChannel.publish({ stream: pushedStream, headers });
     }
-    parser.pushPromise(this.id, pushId, headers, sensitiveNames);
+    try {
+      parser.pushPromise(this.id, pushId, headers, sensitiveNames);
+    } catch (err) {
+      // pushPromise() can throw synchronously (invalid token, invalid pseudo-header, oversized
+      // block). The pushed stream was already created by getNextStream's streamStart; tear it
+      // down so the connection count and its context root do not leak, and report the error
+      // through the callback like node does.
+      if (pushedStream && !pushedStream.destroyed) pushedStream.destroy(err);
+      process.nextTick(callback, err);
+      return;
+    }
     process.nextTick(callback, null, pushedStream, headers);
   }
 
@@ -2874,6 +2890,7 @@ class ServerHttp2Stream extends Http2Stream {
       headers = {};
     } else if ($isArray(headers)) {
       statusCode = 0;
+      let statusFound = false;
       let isDateSet = false;
       // Never mutate the caller's array: the :status/date defaults below are appended to a copy.
       // Symbol-keyed own properties (the never-index list) do not survive a copy; carry it over.
@@ -2884,10 +2901,14 @@ class ServerHttp2Stream extends Http2Stream {
         const key = headers[i];
         if (typeof key !== "string") continue;
         const lowered = key.toLowerCase();
-        if (lowered === HTTP2_HEADER_STATUS) statusCode = headers[i + 1] | 0;
-        else if (lowered === HTTP2_HEADER_DATE) isDateSet = true;
+        if (lowered === HTTP2_HEADER_STATUS) {
+          statusFound = true;
+          statusCode = headers[i + 1] | 0;
+        } else if (lowered === HTTP2_HEADER_DATE) isDateSet = true;
       }
-      if (!statusCode) {
+      if (!statusFound) {
+        // Only default :status when it is genuinely absent - a present-but-invalid value (0, a
+        // non-numeric string) must fall through to the range validation instead of being doubled.
         statusCode = 200;
         headers.unshift(HTTP2_HEADER_STATUS, statusCode);
       }
@@ -3071,6 +3092,13 @@ function assertNoConnectionHeaders(headers): void {
 }
 
 function headerValueIsUnsendable(value): boolean {
+  if ($isArray(value)) {
+    // Array-valued headers (e.g. set-cookie): unsendable if any element is.
+    for (let i = 0; i < value.length; i++) {
+      if (headerValueIsUnsendable(value[i])) return true;
+    }
+    return false;
+  }
   if (typeof value !== "string") return false;
   for (let i = 0; i < value.length; i++) {
     const c = value.charCodeAt(i);
@@ -3230,6 +3258,9 @@ class ServerHttp2Session extends Http2Session {
   // The SETTINGS_MAX_CONCURRENT_STREAMS value this session advertised (enforced from the moment it
   // is submitted, like nghttp2's pending local settings — not only after the peer ACKs).
   #advertisedMaxConcurrentStreams: number = Infinity;
+  // Client-initiated (odd-id) streams currently open: RFC 9113 5.1.2 - only these count against
+  // the limit this server advertised; its own pushed streams count against the client's setting.
+  #peerInitiatedStreams: number = 0;
 
   static #Handlers = {
     binaryType: "buffer",
@@ -3238,11 +3269,12 @@ class ServerHttp2Session extends Http2Session {
       // RFC 9113 §5.1.2: refuse peer-initiated streams that would exceed the advertised
       // SETTINGS_MAX_CONCURRENT_STREAMS. nghttp2 answers with RST_STREAM REFUSED_STREAM and never
       // surfaces the stream to the JS layer.
-      if (stream_id % 2 === 1 && self.#connections >= self.#advertisedMaxConcurrentStreams) {
+      if (stream_id % 2 === 1 && self.#peerInitiatedStreams >= self.#advertisedMaxConcurrentStreams) {
         self.#parser?.rstStream(stream_id, constants.NGHTTP2_REFUSED_STREAM);
         return;
       }
       self.#connections++;
+      if (stream_id % 2 === 1) self.#peerInitiatedStreams++;
       const stream = new ServerHttp2Stream(stream_id, self, null);
       self.#parser?.setStreamContext(stream_id, stream);
     },
@@ -3260,11 +3292,13 @@ class ServerHttp2Session extends Http2Session {
         stream.emit("aborted");
       }
       self.#connections--;
+      if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamError(self: ServerHttp2Session, stream: ServerHttp2Stream, error: number) {
       if (!self || typeof stream !== "object") return;
       self.#connections--;
+      if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) {
@@ -3289,6 +3323,7 @@ class ServerHttp2Session extends Http2Session {
       if (state === 7) {
         markStreamClosed(stream);
         self.#connections--;
+        if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
         stream.destroy();
         if (self.#connections === 0 && self.#closed) {
           self.destroy();
@@ -4530,7 +4565,7 @@ class ClientHttp2Session extends Http2Session {
           // instead of reading a string key off the array.
           let rawHasHost = false;
           for (let i = 0; i < raw.length; i += 2) {
-            if (raw[i] === HTTP2_HEADER_HOST) {
+            if (typeof raw[i] === "string" && raw[i].toLowerCase() === HTTP2_HEADER_HOST) {
               rawHasHost = true;
               break;
             }
@@ -4650,6 +4685,28 @@ class ClientHttp2Session extends Http2Session {
         }
       }
 
+      {
+        // nghttp2 rejects :path values containing control characters, SP or DEL at send time and
+        // surfaces it as a stream error rather than a synchronous throw; mirror that. Validate
+        // before a stream id is allocated AND before the concurrency queue, so queued requests are
+        // validated exactly like immediate ones.
+        const path = headers[":path"];
+        if (typeof path === "string") {
+          for (let i = 0; i < path.length; i++) {
+            const c = path.charCodeAt(i);
+            if (c <= 0x20 || c === 0x7f) {
+              const req = new ClientHttp2Stream(undefined, this, headers);
+              req.authority = authority;
+              req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
+              req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
+              process.nextTick(emitStreamErrorNT, this, req, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
+              process.nextTick(emitEventNT, req, "ready");
+              return req;
+            }
+          }
+        }
+      }
+
       // Peer SETTINGS_MAX_CONCURRENT_STREAMS: when no slot is available the request is not
       // submitted yet — node returns a "pending" stream (no id) and sends its HEADERS frame once a
       // slot frees, keeping stream id allocation in submission order.
@@ -4678,26 +4735,6 @@ class ClientHttp2Session extends Http2Session {
         return req;
       }
 
-      {
-        // nghttp2 rejects :path values containing control characters, SP or DEL at send time and
-        // surfaces it as a stream error rather than a synchronous throw; mirror that. Validate
-        // before a stream id is allocated so the rejected request never creates stream state.
-        const path = headers[":path"];
-        if (typeof path === "string") {
-          for (let i = 0; i < path.length; i++) {
-            const c = path.charCodeAt(i);
-            if (c <= 0x20 || c === 0x7f) {
-              const req = new ClientHttp2Stream(undefined, this, headers);
-              req.authority = authority;
-              req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
-              req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
-              process.nextTick(emitStreamErrorNT, this, req, constants.NGHTTP2_PROTOCOL_ERROR, true, false);
-              process.nextTick(emitEventNT, req, "ready");
-              return req;
-            }
-          }
-        }
-      }
       let stream_id: number = this.#parser.getNextStream();
       if (stream_id < 0) {
         const req = new ClientHttp2Stream(undefined, this, headers);

@@ -179,7 +179,6 @@ test/js/node/test/sequential/test-http2-settings-flood.js [ SKIP ] # hangs; skip
 test/js/node/http2/node-http2.test.js [ FAIL ] # legacy-parser expectations under reconciliation
 test/js/node/http2/h2-conformance.test.ts [ FAIL ] # PRIORITY wrong-size case under review (stream vs connection error)
 test/js/node/http2/node-http2-invalid-padding.test.ts [ FAIL ] # legacy-parser expectations under reconciliation
-[ WINDOWS ] test/js/web/fetch/fetch-http2-client.test.ts [ FAIL ] # http2-over-fetch teardown gap on Windows
 [ ASAN ] test/js/third_party/grpc-js/test-server.test.ts [ SKIP ] # connect-race socket lifetime report under investigation
 [ WINDOWS ] test/js/third_party/grpc-js/test-server.test.ts [ FAIL ] # http2 teardown gap on Windows
 
