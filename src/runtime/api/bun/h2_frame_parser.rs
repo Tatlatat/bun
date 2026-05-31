@@ -5812,11 +5812,15 @@ impl H2FrameParser {
             // (rewrite_read holds the engine borrow there); deferring the sync to the pending
             // delta keeps that path panic-free.
             match this.engine.try_borrow_mut() {
-                Ok(mut guard) => {
-                    if let Some(engine) = guard.as_mut() {
-                        engine.recv_window.grow(increment as i64);
+                Ok(mut guard) => match guard.as_mut() {
+                    Some(engine) => engine.recv_window.grow(increment as i64),
+                    None => {
+                        // The engine is created lazily on the first inbound read; carry the
+                        // growth forward so it applies when that happens.
+                        this.pending_recv_window_growth
+                            .set(this.pending_recv_window_growth.get() + increment as i64);
                     }
-                }
+                },
                 Err(_) => {
                     // A dispatch is in progress; accumulate the delta for rewrite_read to apply
                     // when the borrow is released.
