@@ -11,7 +11,7 @@ use super::hpack;
 use super::settings::{self, Settings};
 use super::stream::{self, State};
 use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
-use std::collections::HashMap;
+use bun_collections::HashMap;
 
 /// Per-stream protocol state tracked by the engine.
 pub struct Stream {
