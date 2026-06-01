@@ -263,6 +263,12 @@ export const structuredCloneAdvanced: (
 
 export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunction_lsanDoLeakCheck", 1);
 
+export const jsHeapDataLiveCount: () => number = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_jsHeapDataLiveCount",
+  0,
+);
+
 export const BunString_toThreadSafeRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_BunString_toThreadSafeRefCountDelta",
